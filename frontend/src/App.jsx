@@ -116,13 +116,6 @@ export default function App() {
     () => getFleetGroups(input, reference.vehicleClasses),
     [input, reference.vehicleClasses]
   );
-  const selectedVehicle = useMemo(
-    () =>
-      reference.vehicleClasses.find(
-        (vehicleClass) => vehicleClass.id === fleetGroups[0]?.vehicleClassId
-      ),
-    [fleetGroups, reference.vehicleClasses]
-  );
   const selectedTaxProfile = useMemo(
     () =>
       reference.taxProfiles.find(
@@ -131,6 +124,29 @@ export default function App() {
           profile.companyTypeId === input.companyTypeId
       ) || reference.taxProfiles[0],
     [input.companyTypeId, input.countryId, reference.taxProfiles]
+  );
+  const normalizedInput = useMemo(
+    () => normalizedPreviewInput(input, reference.vehicleClasses),
+    [input, reference.vehicleClasses]
+  );
+  const currentTaxProfile = useMemo(
+    () => ({
+      ...selectedTaxProfile,
+      vatRegistered: Boolean(input.vatRegistered)
+    }),
+    [input.vatRegistered, selectedTaxProfile]
+  );
+  const draftCalculation = useMemo(
+    () => safeCalculateBreakEven({ input: normalizedInput, taxProfile: currentTaxProfile }),
+    [currentTaxProfile, normalizedInput]
+  );
+  const draftPricingScenarios = useMemo(
+    () => safeGeneratePricingScenarios({ input: normalizedInput, taxProfile: currentTaxProfile }),
+    [currentTaxProfile, normalizedInput]
+  );
+  const draftSensitivity = useMemo(
+    () => safeGenerateSensitivity({ input: normalizedInput, taxProfile: currentTaxProfile }),
+    [currentTaxProfile, normalizedInput]
   );
 
   useEffect(() => {
@@ -144,8 +160,17 @@ export default function App() {
 
   const previewIsStale = calculation
     ? JSON.stringify(calculation.input) !==
-      JSON.stringify(normalizedPreviewInput(input, reference.vehicleClasses))
+      JSON.stringify(normalizedInput)
     : true;
+  const displayCalculation = previewIsStale
+    ? draftCalculation
+    : calculation || draftCalculation;
+  const displayPricingScenarios = previewIsStale
+    ? draftPricingScenarios
+    : pricingScenarios;
+  const displaySensitivity = previewIsStale
+    ? draftSensitivity
+    : sensitivity;
 
   async function loadReferenceData() {
     try {
@@ -168,10 +193,7 @@ export default function App() {
     return {
       runName,
       input: normalizedPreviewInput({ ...input, ...overrides }, reference.vehicleClasses),
-      taxProfile: {
-        ...selectedTaxProfile,
-        vatRegistered: input.vatRegistered
-      }
+      taxProfile: currentTaxProfile
     };
   }
 
@@ -239,17 +261,22 @@ export default function App() {
   async function openRun(id) {
     try {
       const run = await apiRequest(`/api/calculations/${id}`);
-      setInput(run.inputSnapshot);
+      const openedInput = normalizedPreviewInput(
+        run.inputSnapshot || input,
+        reference.vehicleClasses
+      );
+      const openedCalculation = calculateBreakEven({
+        input: openedInput,
+        taxProfile: run.taxSnapshot
+      });
+      setInput(openedInput);
       setRunName(run.runName || "Opened run");
       setCalculation({
-        input: run.inputSnapshot,
+        input: openedInput,
         taxProfile: run.taxSnapshot,
         vehicleSnapshot: run.vehicleSnapshot,
-        result: run.resultSnapshot,
-        formulas: calculateBreakEven({
-          input: run.inputSnapshot,
-          taxProfile: run.taxSnapshot
-        }).formulas
+        result: openedCalculation.result,
+        formulas: openedCalculation.formulas
       });
       setPricingScenarios(run.pricingScenarios || []);
       setActivePage("results");
@@ -270,7 +297,7 @@ export default function App() {
   }
 
   function duplicateRun(run) {
-    setInput(run.inputSnapshot || input);
+    setInput(normalizedPreviewInput(run.inputSnapshot || input, reference.vehicleClasses));
     setRunName(`${run.runName || "Run"} copy`);
     setActivePage("inputs");
     setStatus("Run duplicated locally. Calculate and save when ready.");
@@ -411,7 +438,7 @@ export default function App() {
     setStatus("Vehicle group removed");
   }
 
-  const result = calculation?.result;
+  const result = displayCalculation?.result;
 
   return (
     <main className="app-shell">
@@ -460,11 +487,15 @@ export default function App() {
           <DashboardPage
             fleetGroups={fleetGroups}
             input={input}
-            pricingScenarios={pricingScenarios}
+            previewIsStale={previewIsStale}
+            pricingScenarios={displayPricingScenarios}
             result={result}
+            selectedBusinessModel={selectedBusinessModel}
+            selectedCompanyType={selectedCompanyType}
             selectedCountry={selectedCountry}
-            selectedVehicle={selectedVehicle}
+            selectedTaxProfile={selectedTaxProfile}
             setActivePage={setActivePage}
+            vatRegistered={Boolean(input.vatRegistered)}
           />
         )}
 
@@ -499,12 +530,12 @@ export default function App() {
         )}
 
         {activePage === "results" && (
-          <BreakEvenResultsPage calculation={calculation} />
+          <BreakEvenResultsPage calculation={displayCalculation} />
         )}
 
         {activePage === "pricing" && (
           <PricingPage
-            pricingScenarios={pricingScenarios}
+            pricingScenarios={displayPricingScenarios}
             result={result}
             updateInput={updateInput}
             input={input}
@@ -512,7 +543,7 @@ export default function App() {
         )}
 
         {activePage === "sensitivity" && (
-          <SensitivityPage sensitivity={sensitivity} />
+          <SensitivityPage sensitivity={displaySensitivity} />
         )}
 
         {activePage === "vehicles" && (
@@ -536,42 +567,96 @@ export default function App() {
 
 function DashboardPage({
   fleetGroups,
-  input,
+  previewIsStale,
   pricingScenarios,
   result,
+  selectedBusinessModel,
+  selectedCompanyType,
   selectedCountry,
-  selectedVehicle,
-  setActivePage
+  selectedTaxProfile,
+  setActivePage,
+  vatRegistered
 }) {
+  const fleetStats = getFleetDraftStats(fleetGroups, result);
+  const groupRows = buildDashboardGroupRows(fleetGroups, result);
+
   return (
     <div className="page-stack">
-      <section className="summary-grid">
-        <Kpi label="Break-even" value={money(result?.breakEvenPerLoadedKm, 4)} unit="EUR/loaded km" />
-        <Kpi label="Tonne-km" value={money(result?.breakEvenPerTonneKm, 4)} unit="EUR/tonne-km" />
-        <Kpi label="Customer rate" value={money(result?.customerRateExclVat, 4)} unit="excl. VAT" />
-        <Kpi label="After tax profit" value={money(result?.profitAfterTax, 0)} unit={percent(result?.afterTaxMargin)} />
+      <section className="dashboard-hero">
+        <div>
+          <p className="eyebrow">Fleet dashboard</p>
+          <h2>{fleetStats.modeLabel}</h2>
+          <div className="dashboard-meta">
+            <span>{selectedCountry?.name || "No country"}</span>
+            <span>{selectedCompanyType?.name || "No company type"}</span>
+            <span>{selectedBusinessModel?.name || "No business model"}</span>
+            <span>{previewIsStale ? "Draft preview" : "Calculated"}</span>
+          </div>
+        </div>
+        <div className="dashboard-actions">
+          <button onClick={() => setActivePage("inputs")} type="button">
+            Edit Fleet
+          </button>
+          <button onClick={() => setActivePage("results")} type="button">
+            Break-even
+          </button>
+        </div>
       </section>
 
-      <section className="two-column">
-        <Card title="Workflow Status">
-          <WorkflowList
-            rows={[
-              ["Company profile", selectedCountry?.name || "Not selected", "company"],
-              ["Fleet setup", fleetModeLabel(result?.fleetMode, fleetGroups), "inputs"],
-              ["Break-even result", result ? money(result.breakEvenPerLoadedKm, 4) : "Needs calculation", "results"],
-              ["Pricing scenarios", `${pricingScenarios.length} generated`, "pricing"]
-            ]}
-            setActivePage={setActivePage}
-          />
-        </Card>
+      <section className="summary-grid">
+        <Kpi label="Annual cost" value={money(result?.totalAnnualCost)} unit="fleet total" />
+        <Kpi label="Break-even" value={money(result?.breakEvenPerLoadedKm)} unit="EUR/loaded km" />
+        <Kpi label="Customer rate" value={money(result?.customerRateExclVat)} unit="excl. VAT" />
+        <Kpi label="After tax profit" value={money(result?.profitAfterTax)} unit={percent(result?.afterTaxMargin)} />
+      </section>
 
-        <Card title="Current Assumptions">
-          <Fact label="Vehicles" value={formatCount(result?.vehicleCount ?? input.numberOfTrucks)} />
-          <Fact label="Vehicle groups" value={formatCount(result?.vehicleGroupCount ?? fleetGroups.length)} />
-          <Fact label="Primary vehicle" value={selectedVehicle?.displayName || "Not selected"} />
-          <Fact label="Loaded km/year" value={format(result?.loadedKmYear)} />
-          <Fact label="Tonne-km/year" value={format(result?.annualTonneKm)} />
-        </Card>
+      <section className="dashboard-metrics-grid">
+        <MetricTile label="Vehicles" value={formatCount(fleetStats.vehicleCount)} />
+        <MetricTile label="Groups" value={formatCount(fleetStats.groupCount)} />
+        <MetricTile label="Loaded km/year" value={format(result?.loadedKmYear)} />
+        <MetricTile label="Tonne-km/year" value={format(result?.annualTonneKm)} />
+        <MetricTile label="Average payload" value={`${format(result?.effectivePayloadTons)} t`} />
+        <MetricTile label="VAT" value={vatRegistered ? percent(selectedTaxProfile?.vatRate) : "0.00%"} />
+      </section>
+
+      <section className="dashboard-layout">
+        <section className="dashboard-panel dashboard-panel-wide">
+          <div className="panel-heading">
+            <h2>Fleet Groups</h2>
+            <span>{fleetStats.modeLabel}</span>
+          </div>
+          <div className="fleet-group-list">
+            {groupRows.map((group) => (
+              <FleetDashboardRow group={group} key={group.id} />
+            ))}
+          </div>
+        </section>
+
+        <section className="dashboard-panel">
+          <div className="panel-heading">
+            <h2>Commercial Assumptions</h2>
+            <span>{previewIsStale ? "Draft" : "Current"}</span>
+          </div>
+          <Fact label="Country" value={selectedCountry?.name || "n/a"} />
+          <Fact label="Company type" value={selectedCompanyType?.name || "n/a"} />
+          <Fact label="Business model" value={selectedBusinessModel?.name || "n/a"} />
+          <Fact label="Markup" value={percent(fleetStats.markupPercentage)} />
+          <Fact label="Business tax" value={percent(selectedTaxProfile?.effectiveBusinessTaxRate)} />
+          <Fact label="Pricing scenarios" value={formatCount(pricingScenarios.length)} />
+        </section>
+
+        <section className="dashboard-panel">
+          <div className="panel-heading">
+            <h2>Operating Shape</h2>
+            <span>{formatCount(fleetStats.vehicleCount)} vehicles</span>
+          </div>
+          <Fact label="Annual total km" value={format(result?.annualTotalKm)} />
+          <Fact label="Loaded km" value={format(result?.loadedKmYear)} />
+          <Fact label="Load factor" value={percent(fleetStats.weightedLoadFactor)} />
+          <Fact label="Fuel cost/km" value={money(result?.fuelCostPerKm)} />
+          <Fact label="Variable cost/km" value={money(result?.variableCostPerKm)} />
+          <Fact label="Fixed and driver cost" value={money((result?.driverAnnualCost || 0) + (result?.vehicleFixedAnnualCost || 0))} />
+        </section>
       </section>
     </div>
   );
@@ -1039,6 +1124,35 @@ function Kpi({ label, unit, value }) {
   );
 }
 
+function MetricTile({ label, value }) {
+  return (
+    <article className="metric-tile">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </article>
+  );
+}
+
+function FleetDashboardRow({ group }) {
+  return (
+    <article className="fleet-dashboard-row">
+      <div className="fleet-row-main">
+        <strong>{group.name}</strong>
+        <span>{group.vehicleClassName}</span>
+        <div className="cost-share-track" aria-hidden="true">
+          <span style={{ width: `${group.costShare}%` }} />
+        </div>
+      </div>
+      <MetricTile label="Vehicles" value={formatCount(group.vehicleCount)} />
+      <MetricTile label="Daily km" value={format(group.dailyKm)} />
+      <MetricTile label="Load" value={percent(group.loadFactor)} />
+      <MetricTile label="Payload" value={`${format(group.effectivePayloadTons)} t`} />
+      <MetricTile label="Annual cost" value={money(group.totalAnnualCost)} />
+      <MetricTile label="Break-even" value={money(group.breakEvenPerLoadedKm)} />
+    </article>
+  );
+}
+
 function NumberField({ field, integer = false, label, onChange, unit, value }) {
   return (
     <label className="number-field">
@@ -1284,6 +1398,89 @@ function fleetModeLabel(mode, fleetGroups = []) {
     : "Multiple vehicles, same type";
 }
 
+function getFleetDraftStats(fleetGroups, result) {
+  const vehicleCount = fleetGroups.reduce(
+    (sum, group) => sum + vehicleCountValue(group),
+    0
+  );
+  const weightedAnnualKm = fleetGroups.reduce(
+    (sum, group) =>
+      sum + vehicleCountValue(group) * Number(group.dailyKm || 0) * Number(group.operatingDaysPerYear || 0),
+    0
+  );
+  const weightedLoadedKm = fleetGroups.reduce(
+    (sum, group) =>
+      sum +
+      vehicleCountValue(group) *
+        Number(group.dailyKm || 0) *
+        Number(group.operatingDaysPerYear || 0) *
+        Number(group.loadFactor || 0),
+    0
+  );
+
+  return {
+    groupCount: fleetGroups.length,
+    markupPercentage: fleetGroups[0]?.markupPercentage,
+    modeLabel: fleetModeLabel(result?.fleetMode, fleetGroups),
+    vehicleCount,
+    weightedLoadFactor:
+      result?.annualTotalKm > 0
+        ? result.loadedKmYear / result.annualTotalKm
+        : safeRatio(weightedLoadedKm, weightedAnnualKm)
+  };
+}
+
+function buildDashboardGroupRows(fleetGroups, result) {
+  const resultsById = new Map(
+    (result?.vehicleGroupResults || []).map((group) => [group.id, group])
+  );
+  const totalCost = result?.totalAnnualCost || 0;
+
+  return fleetGroups.map((group, index) => {
+    const resultGroup = resultsById.get(group.id);
+    const totalAnnualCost = resultGroup?.groupTotals?.totalAnnualCost;
+
+    return {
+      id: group.id || `group-${index + 1}`,
+      name: group.name || `Vehicle group ${index + 1}`,
+      vehicleClassName: resultGroup?.vehicleClassName || "Vehicle type",
+      vehicleCount: group.vehicleCount,
+      dailyKm: group.dailyKm,
+      loadFactor: group.loadFactor,
+      effectivePayloadTons:
+        resultGroup?.perVehicle?.effectivePayloadTons ??
+        Number(group.payloadCapacityTons || 0) * Number(group.payloadUtilisation || 0),
+      totalAnnualCost,
+      breakEvenPerLoadedKm: resultGroup?.groupTotals?.breakEvenPerLoadedKm,
+      costShare: clampPercent(safeRatio(totalAnnualCost, totalCost) * 100)
+    };
+  });
+}
+
+function safeCalculateBreakEven(payload) {
+  try {
+    return calculateBreakEven(payload);
+  } catch {
+    return null;
+  }
+}
+
+function safeGeneratePricingScenarios(payload) {
+  try {
+    return generatePricingScenarios(payload);
+  } catch {
+    return [];
+  }
+}
+
+function safeGenerateSensitivity(payload) {
+  try {
+    return generateSensitivity(payload);
+  } catch {
+    return null;
+  }
+}
+
 async function apiRequest(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     method: options.method || "GET",
@@ -1365,6 +1562,15 @@ function normaliseVehicleCount(value) {
 function vehicleCountValue(group) {
   const count = normaliseVehicleCount(group.vehicleCount);
   return count === "" ? 0 : count;
+}
+
+function safeRatio(numerator, denominator) {
+  return denominator ? numerator / denominator : 0;
+}
+
+function clampPercent(value) {
+  if (!Number.isFinite(Number(value))) return 0;
+  return Math.max(0, Math.min(100, Number(value)));
 }
 
 function dateTime(value) {
