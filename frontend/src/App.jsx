@@ -356,6 +356,12 @@ export default function App() {
 
         const normalized = value === "" ? "" : Number(value);
         if (value !== "" && !Number.isFinite(normalized)) return group;
+        if (field === "vehicleCount") {
+          return {
+            ...group,
+            vehicleCount: value === "" ? "" : normaliseVehicleCount(normalized)
+          };
+        }
 
         if (field === "vehicleClassId") {
           const vehicle = reference.vehicleClasses.find(
@@ -560,8 +566,8 @@ function DashboardPage({
         </Card>
 
         <Card title="Current Assumptions">
-          <Fact label="Vehicles" value={format(result?.vehicleCount ?? input.numberOfTrucks)} />
-          <Fact label="Vehicle groups" value={format(result?.vehicleGroupCount ?? fleetGroups.length)} />
+          <Fact label="Vehicles" value={formatCount(result?.vehicleCount ?? input.numberOfTrucks)} />
+          <Fact label="Vehicle groups" value={formatCount(result?.vehicleGroupCount ?? fleetGroups.length)} />
           <Fact label="Primary vehicle" value={selectedVehicle?.displayName || "Not selected"} />
           <Fact label="Loaded km/year" value={format(result?.loadedKmYear)} />
           <Fact label="Tonne-km/year" value={format(result?.annualTonneKm)} />
@@ -606,7 +612,7 @@ function CompanyTaxPage({
             options={businessModels.map((model) => [model.id, model.name])}
             value={input.businessModelId}
           />
-          <Fact label="Fleet vehicles" value={format(input.numberOfTrucks)} />
+          <Fact label="Fleet vehicles" value={formatCount(input.numberOfTrucks)} />
           <label className="checkbox-row">
             <input
               checked={Boolean(input.vatRegistered)}
@@ -658,10 +664,10 @@ function TransportInputsPage({
       <section className="form-grid">
         <Card title="Fleet Strategy">
           <Fact label="Scenario" value={fleetModeLabel(result?.fleetMode, fleetGroups)} />
-          <Fact label="Vehicle groups" value={format(fleetGroups.length)} />
+          <Fact label="Vehicle groups" value={formatCount(fleetGroups.length)} />
           <Fact
             label="Vehicles"
-            value={format(result?.vehicleCount ?? input.numberOfTrucks)}
+            value={formatCount(result?.vehicleCount ?? input.numberOfTrucks)}
           />
           <button className="secondary-button inline-action" onClick={addVehicleGroup} type="button">
             Add vehicle group
@@ -707,6 +713,7 @@ function TransportInputsPage({
                 onChange={(field, value) => updateVehicleGroup(index, field, value)}
                 unit="vehicles"
                 value={group.vehicleCount}
+                integer
               />
             </div>
 
@@ -818,7 +825,7 @@ function BreakEvenResultsPage({ calculation }) {
             rows={result.vehicleGroupResults.map((group) => [
               group.name,
               group.vehicleClassName,
-              format(group.vehicleCount),
+              formatCount(group.vehicleCount),
               money(group.groupTotals.totalAnnualCost),
               money(group.groupTotals.breakEvenPerLoadedKm),
               money(group.groupTotals.customerRateExclVat),
@@ -1032,17 +1039,17 @@ function Kpi({ label, unit, value }) {
   );
 }
 
-function NumberField({ field, label, onChange, unit, value }) {
+function NumberField({ field, integer = false, label, onChange, unit, value }) {
   return (
     <label className="number-field">
       <span>{label}</span>
       <div>
         <input
-          inputMode="decimal"
+          inputMode={integer ? "numeric" : "decimal"}
           onChange={(event) => onChange(field, event.target.value)}
-          step="0.01"
+          step={integer ? "1" : "0.01"}
           type="number"
-          value={formatInputNumber(value)}
+          value={integer ? formatInputInteger(value) : formatInputNumber(value)}
         />
         <small>{unit}</small>
       </div>
@@ -1141,7 +1148,7 @@ function getFleetGroups(input, vehicles = []) {
         name:
           vehicles.find((vehicle) => vehicle.id === Number(input.vehicleClassId))
             ?.displayName || "Vehicle group 1",
-        vehicleCount: input.numberOfTrucks || 1
+        vehicleCount: normaliseVehicleCount(input.numberOfTrucks || 1)
       },
       input,
       vehicles,
@@ -1160,7 +1167,7 @@ function normalizeFleetGroupForUi(group, input, vehicles, index) {
     id: group.id || `group-${index + 1}`,
     name: group.name || vehicle?.displayName || `Vehicle group ${index + 1}`,
     vehicleClassId: Number(group.vehicleClassId ?? vehicle?.id ?? input.vehicleClassId),
-    vehicleCount: Number(group.vehicleCount ?? group.numberOfTrucks ?? 1),
+    vehicleCount: normaliseVehicleCount(group.vehicleCount ?? group.numberOfTrucks ?? 1),
     dailyKm: Number(group.dailyKm ?? input.dailyKm),
     operatingDaysPerYear: Number(
       group.operatingDaysPerYear ?? input.operatingDaysPerYear
@@ -1209,10 +1216,7 @@ function syncInputWithFleetGroups(input, groups) {
   const nextInput = {
     ...input,
     ...copyGroupFieldsToInput(firstGroup),
-    numberOfTrucks: groups.reduce(
-      (sum, group) => sum + (Number(group.vehicleCount) || 0),
-      0
-    ),
+    numberOfTrucks: groups.reduce((sum, group) => sum + vehicleCountValue(group), 0),
     vehicleClassId: firstGroup.vehicleClassId,
     vehicleGroups: groups
   };
@@ -1270,7 +1274,7 @@ function fleetModeLabel(mode, fleetGroups = []) {
     fleetGroups.map((group) => Number(group.vehicleClassId))
   );
   const vehicleCount = fleetGroups.reduce(
-    (sum, group) => sum + (Number(group.vehicleCount) || 0),
+    (sum, group) => sum + vehicleCountValue(group),
     0
   );
 
@@ -1311,7 +1315,7 @@ function normalizedPreviewInput(input, vehicles = []) {
     ...input,
     ...copyGroupFieldsToInput(vehicleGroups[0]),
     numberOfTrucks: vehicleGroups.reduce(
-      (sum, group) => sum + (Number(group.vehicleCount) || 0),
+      (sum, group) => sum + vehicleCountValue(group),
       0
     ),
     vehicleGroups,
@@ -1337,9 +1341,30 @@ function format(value) {
   });
 }
 
+function formatCount(value) {
+  if (value == null || Number.isNaN(Number(value))) return "n/a";
+  return String(normaliseVehicleCount(value));
+}
+
 function formatInputNumber(value) {
   if (value === "" || value == null || Number.isNaN(Number(value))) return "";
   return Number(value).toFixed(2);
+}
+
+function formatInputInteger(value) {
+  if (value === "" || value == null || Number.isNaN(Number(value))) return "";
+  return String(normaliseVehicleCount(value));
+}
+
+function normaliseVehicleCount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "";
+  return Math.max(1, Math.round(number));
+}
+
+function vehicleCountValue(group) {
+  const count = normaliseVehicleCount(group.vehicleCount);
+  return count === "" ? 0 : count;
 }
 
 function dateTime(value) {

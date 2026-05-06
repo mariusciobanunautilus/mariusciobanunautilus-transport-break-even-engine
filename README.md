@@ -17,7 +17,7 @@ The blueprint engine now supports three fleet strategies:
 - multiple vehicles of the same type
 - mixed fleets with separate vehicle groups
 
-Mixed fleets are calculated group by group first, then aggregated into fleet-level cost, break-even, rate and profit outputs. The UI formats number inputs and displayed outputs to two decimals while the engine keeps full precision internally.
+Mixed fleets are calculated group by group first, then aggregated into fleet-level cost, break-even, rate and profit outputs. The UI formats monetary, rate and measurement inputs/outputs to two decimals while the engine keeps full precision internally. Vehicle counts are whole units.
 
 ## Current Implementation Sprints
 

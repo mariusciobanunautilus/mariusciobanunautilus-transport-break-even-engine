@@ -667,6 +667,12 @@ function normalizeVehicleGroup(rawGroup, baseInput, taxProfile, index, usesExpli
       `vehicleGroups[${index}].vehicleCount`
     );
   }
+  if (!Number.isInteger(vehicleCount)) {
+    throw validationError(
+      `vehicleGroups[${index}].vehicleCount must be a whole number`,
+      `vehicleGroups[${index}].vehicleCount`
+    );
+  }
 
   const merged = {
     ...baseInput,
@@ -930,6 +936,10 @@ function validateCalculationInput(input) {
     if (!(input[field] > 0)) {
       throw validationError(`${field} must be greater than zero`, field);
     }
+  }
+
+  if (!Number.isInteger(input.numberOfTrucks)) {
+    throw validationError("numberOfTrucks must be a whole number", "numberOfTrucks");
   }
 
   if (input.operatingDaysPerYear > 365) {

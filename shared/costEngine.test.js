@@ -256,6 +256,39 @@ test("blueprint mixed fleet calculates each vehicle group before aggregation", (
   );
 });
 
+test("blueprint rejects fractional vehicle counts", () => {
+  assert.throws(
+    () =>
+      calculateBreakEven({
+        input: {
+          ...defaultBlueprintCalculationInput,
+          countryId: 1,
+          companyTypeId: 2,
+          numberOfTrucks: 1.06
+        }
+      }),
+    /numberOfTrucks must be a whole number/
+  );
+
+  assert.throws(
+    () =>
+      calculateBreakEven({
+        input: {
+          ...defaultBlueprintCalculationInput,
+          countryId: 1,
+          companyTypeId: 2,
+          vehicleGroups: [
+            {
+              ...defaultBlueprintCalculationInput,
+              vehicleCount: 1.06
+            }
+          ]
+        }
+      }),
+    /vehicleGroups\[0\]\.vehicleCount must be a whole number/
+  );
+});
+
 test("blueprint pricing and sensitivity previews produce expected matrices", () => {
   const scenarios = generatePricingScenarios({
     markups: [0, 0.15],
