@@ -501,7 +501,7 @@ p {
 
 .group-summary {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) repeat(2, minmax(180px, 0.8fr));
+  grid-template-columns: minmax(0, 1.1fr) repeat(3, minmax(180px, 0.8fr));
   gap: 16px;
   margin: 4px 0 14px;
   border-top: 1px solid #edf0f2;

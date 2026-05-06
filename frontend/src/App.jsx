@@ -833,7 +833,8 @@ function TransportInputsPage({
 
             <div className="group-summary">
               <Fact label="Best for" value={selectedVehicle?.bestFor || "n/a"} />
-              <Fact label="Group annual cost" value={money(groupResult?.groupTotals?.totalAnnualCost)} />
+              <Fact label="Per vehicle annual cost" value={money(groupResult?.perVehicle?.totalAnnualCost)} />
+              <Fact label="Group annual cost" value={groupCostFormula(groupResult)} />
               <Fact label="Group break-even" value={money(groupResult?.groupTotals?.breakEvenPerLoadedKm)} />
             </div>
 
@@ -1573,6 +1574,11 @@ function format(value) {
 function formatCount(value) {
   if (value == null || Number.isNaN(Number(value))) return "n/a";
   return String(normaliseVehicleCount(value));
+}
+
+function groupCostFormula(groupResult) {
+  if (!groupResult?.perVehicle || !groupResult?.groupTotals) return "n/a";
+  return `${money(groupResult.perVehicle.totalAnnualCost)} x ${formatCount(groupResult.vehicleCount)} = ${money(groupResult.groupTotals.totalAnnualCost)}`;
 }
 
 function formatInputNumber(value) {

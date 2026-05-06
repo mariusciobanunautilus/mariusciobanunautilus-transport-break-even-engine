@@ -289,6 +289,51 @@ test("blueprint rejects fractional vehicle counts", () => {
   );
 });
 
+test("blueprint van group annual cost matches per-vehicle cost times vehicle count", () => {
+  const { result } = calculateBreakEven({
+    input: {
+      countryId: 3,
+      companyTypeId: 10,
+      businessModelId: 1,
+      vehicleGroups: [
+        {
+          id: "large-vans",
+          name: "Large 3.5t van",
+          vehicleClassId: 2,
+          vehicleCount: 5,
+          dailyKm: 300,
+          operatingDaysPerYear: 240,
+          loadFactor: 0.85,
+          payloadCapacityTons: 2.5,
+          payloadUtilisation: 0.8,
+          fuelConsumptionLPer100Km: 12,
+          fuelPricePerLiter: 1.55,
+          tyresAnnualCost: 4500,
+          maintenanceAnnualCost: 1200,
+          roadFeesAnnualCost: 900,
+          driverSalaryAnnual: 36000,
+          driverPerDiemDaily: 30,
+          ownershipOrLeasingAnnual: 16000,
+          insuranceAnnual: 4800,
+          vehicleTaxAnnual: 500,
+          structuralIndirectCostsAnnual: 2000,
+          markupPercentage: 0.15,
+          targetAfterTaxMargin: 0.1
+        }
+      ]
+    }
+  });
+  const group = result.vehicleGroupResults[0];
+
+  assertClose(group.perVehicle.totalAnnualCost, 87302);
+  assertClose(group.groupTotals.totalAnnualCost, 436510);
+  assertClose(
+    group.groupTotals.totalAnnualCost,
+    group.perVehicle.totalAnnualCost * group.vehicleCount
+  );
+  assertClose(group.groupTotals.breakEvenPerLoadedKm, 1.4265032679738563);
+});
+
 test("blueprint pricing and sensitivity previews produce expected matrices", () => {
   const scenarios = generatePricingScenarios({
     markups: [0, 0.15],
