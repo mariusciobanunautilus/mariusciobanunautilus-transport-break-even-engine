@@ -6,6 +6,7 @@ import {
   computeRegional40t,
   computeTransportEngine,
   computeVehicleClassSensitivity,
+  defaultBlueprintCalculationInput,
   generatePricingScenarios,
   generateSensitivity,
   taxRules
@@ -152,6 +153,107 @@ test("blueprint VAT-disabled invoice layer keeps VAT out of revenue", () => {
   assert.equal(taxProfile.vatRegistered, false);
   assertClose(result.customerRateInclVat, result.customerRateExclVat);
   assertClose(result.vatCollected, 0);
+});
+
+test("blueprint same-type fleet multiplies vehicle totals without changing the rate", () => {
+  const taxProfile = {
+    vatRegistered: true,
+    vatRate: 0.2,
+    employerContributionRate: 0.21,
+    effectiveBusinessTaxRate: 0.23,
+    vehicleTaxDefaultAnnual: 1200
+  };
+  const input = {
+    ...defaultBlueprintCalculationInput,
+    countryId: 1,
+    companyTypeId: 2,
+    numberOfTrucks: 1
+  };
+  const singleVehicle = calculateBreakEven({ input, taxProfile });
+  const sameTypeFleet = calculateBreakEven({
+    input: {
+      ...input,
+      numberOfTrucks: 3
+    },
+    taxProfile
+  });
+
+  assert.equal(sameTypeFleet.result.fleetMode, "same_type_fleet");
+  assert.equal(sameTypeFleet.result.vehicleGroupResults.length, 1);
+  assertClose(sameTypeFleet.result.vehicleCount, 3);
+  assertClose(
+    sameTypeFleet.result.totalAnnualCost,
+    singleVehicle.result.totalAnnualCost * 3
+  );
+  assertClose(
+    sameTypeFleet.result.breakEvenPerLoadedKm,
+    singleVehicle.result.breakEvenPerLoadedKm
+  );
+});
+
+test("blueprint mixed fleet calculates each vehicle group before aggregation", () => {
+  const taxProfile = {
+    vatRegistered: true,
+    vatRate: 0.2,
+    employerContributionRate: 0.21,
+    effectiveBusinessTaxRate: 0.23,
+    vehicleTaxDefaultAnnual: 1200
+  };
+  const input = {
+    ...defaultBlueprintCalculationInput,
+    countryId: 1,
+    companyTypeId: 2,
+    vehicleGroups: [
+      {
+        ...defaultBlueprintCalculationInput,
+        id: "vans",
+        name: "City vans",
+        vehicleClassId: 2,
+        vehicleCount: 2,
+        dailyKm: 180,
+        operatingDaysPerYear: 250,
+        loadFactor: 0.72,
+        payloadCapacityTons: 2,
+        payloadUtilisation: 0.8,
+        fuelConsumptionLPer100Km: 12,
+        tyresAnnualCost: 1200,
+        maintenanceAnnualCost: 2800,
+        roadFeesAnnualCost: 1000,
+        driverSalaryAnnual: 30000,
+        driverPerDiemDaily: 15,
+        ownershipOrLeasingAnnual: 16000,
+        insuranceAnnual: 2500,
+        vehicleTaxAnnual: 400,
+        structuralIndirectCostsAnnual: 5000
+      },
+      {
+        ...defaultBlueprintCalculationInput,
+        id: "artics",
+        name: "Long-haul artics",
+        vehicleClassId: 7,
+        vehicleCount: 1
+      }
+    ]
+  };
+  const { result, vehicleSnapshot } = calculateBreakEven({ input, taxProfile });
+  const sumGroupCost = result.vehicleGroupResults.reduce(
+    (sum, group) => sum + group.groupTotals.totalAnnualCost,
+    0
+  );
+
+  assert.equal(result.fleetMode, "mixed_type_fleet");
+  assert.equal(vehicleSnapshot.displayName, "Mixed fleet");
+  assert.equal(result.vehicleGroupResults.length, 2);
+  assertClose(result.vehicleCount, 3);
+  assertClose(result.totalAnnualCost, sumGroupCost);
+  assertClose(
+    result.breakEvenPerLoadedKm,
+    result.totalAnnualCost / result.loadedKmYear
+  );
+  assert.notEqual(
+    result.vehicleGroupResults[0].groupTotals.breakEvenPerLoadedKm,
+    result.vehicleGroupResults[1].groupTotals.breakEvenPerLoadedKm
+  );
 });
 
 test("blueprint pricing and sensitivity previews produce expected matrices", () => {

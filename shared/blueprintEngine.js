@@ -49,15 +49,27 @@ const vehicleClassCodes = [
 ];
 
 const vehicleDisplayNames = [
-  "Small van",
-  "Large van 3.5t",
-  "Light truck 7.5t",
-  "Rigid truck 12t",
-  "Rigid truck 18t",
-  "Rigid truck 26t",
-  "Articulated 40t",
-  "Articulated 44t",
-  "EMS / high-capacity 60t"
+  "Small delivery van",
+  "Large 3.5t van",
+  "7.5t urban truck",
+  "12t rigid truck",
+  "18t rigid truck",
+  "26t rigid truck",
+  "40t articulated truck",
+  "44t articulated truck",
+  "60t high-capacity combination"
+];
+
+const vehicleBestFor = [
+  "Small parcels and city deliveries",
+  "Courier work and light distribution",
+  "Urban and regional pallet deliveries",
+  "Regional distribution with moderate payloads",
+  "Heavy regional distribution",
+  "Large rigid distribution",
+  "Standard long-haul freight",
+  "Heavy long-haul or intermodal work where allowed",
+  "Permit and country-specific high-capacity lanes"
 ];
 
 export class CalculationValidationError extends Error {
@@ -144,6 +156,7 @@ export function getVehicleClasses() {
     typicalPayloadUtilisation: vehicle.basePayloadUtilization,
     typicalFuelLPer100Km: vehicle.fuelConsumptionLPer100Km,
     annualFixedCostProxy: vehicle.fixedVehicleAnnualCost,
+    bestFor: vehicleBestFor[index] || vehicle.note || "",
     regulatoryNote: vehicle.note,
     sourceUrl: vehicle.sourceUrl || null
   }));
@@ -219,7 +232,164 @@ export function getTaxProfile(query = {}) {
 export function calculateBreakEven(payload = {}) {
   const input = normalizeCalculationInput(payload);
   const taxProfile = resolveTaxProfile(payload, input);
+  const vehicleGroups = normalizeVehicleGroups(payload, input, taxProfile);
+  const vehicleGroupResults = vehicleGroups.map((groupInput, index) =>
+    calculateVehicleGroup(groupInput, taxProfile, index)
+  );
+  const result = aggregateFleetResult(input, vehicleGroupResults);
+  const normalizedInput = {
+    ...input,
+    numberOfTrucks: result.companyTotals.numberOfTrucks,
+    vehicleGroups: vehicleGroups.map(toVehicleGroupInput)
+  };
 
+  return {
+    input: normalizedInput,
+    taxProfile,
+    vehicleSnapshot: buildVehicleSnapshot(vehicleGroupResults),
+    result,
+    formulas: blueprintFormulaDefinitions()
+  };
+}
+
+export function generatePricingScenarios(payload = {}) {
+  const markups = normaliseNumberArray(
+    payload.markups ?? payload.markupPercentages ?? blueprintPricingMarkups,
+    "markups"
+  );
+
+  return markups.map((markupPercentage) => {
+    const nextInput = withVehicleGroupOverrides(payload.input ?? payload, {
+      markupPercentage
+    });
+    const calculation = calculateBreakEven({
+      ...payload,
+      input: nextInput,
+      markupPercentage
+    });
+
+    return {
+      markupPercentage,
+      customerRateExclVat: calculation.result.customerRateExclVat,
+      customerRateInclVat: calculation.result.customerRateInclVat,
+      annualRevenueExclVat: calculation.result.annualRevenueExclVat,
+      vatCollected: calculation.result.vatCollected,
+      invoiceValueInclVat: calculation.result.invoiceValueInclVat,
+      ebitBeforeTax: calculation.result.ebitBeforeTax,
+      businessTax: calculation.result.businessTax,
+      profitAfterTax: calculation.result.profitAfterTax,
+      afterTaxMargin: calculation.result.afterTaxMargin
+    };
+  });
+}
+
+export function generateSensitivity(payload = {}) {
+  const input = normalizeCalculationInput(payload);
+  const taxProfile = resolveTaxProfile(payload, input);
+  const payloadUtilisations = normaliseNumberArray(
+    payload.payloadUtilisations ?? blueprintPayloadUtilisations,
+    "payloadUtilisations"
+  );
+  const loadFactors = normaliseNumberArray(
+    payload.loadFactors ?? blueprintLoadFactors,
+    "loadFactors"
+  );
+  const markups = normaliseNumberArray(
+    payload.markups ?? payload.markupPercentages ?? blueprintPricingMarkups,
+    "markups"
+  );
+  const fuelPrices = normaliseNumberArray(
+    payload.fuelPrices ?? defaultFuelPrices(input.fuelPricePerLiter),
+    "fuelPrices"
+  );
+
+  return {
+    vehicleClassSensitivity: getVehicleClasses().map((vehicle) => {
+      const calculation = calculateBreakEven({
+        input: withVehicleDefaults(withoutVehicleGroups(input), vehicle),
+        taxProfile
+      });
+      return {
+        vehicleClassId: vehicle.id,
+        vehicleClassCode: vehicle.code,
+        vehicleClassName: vehicle.displayName,
+        payloadCapacityTons: vehicle.payloadCapacityTons,
+        breakEvenPerLoadedKm: calculation.result.breakEvenPerLoadedKm,
+        breakEvenPerTonneKm: calculation.result.breakEvenPerTonneKm,
+        annualTonneKm: calculation.result.annualTonneKm
+      };
+    }),
+    payloadUtilisationSensitivity: payloadUtilisations.map((payloadUtilisation) => {
+      const calculation = calculateBreakEven({
+        input: withVehicleGroupOverrides(input, { payloadUtilisation }),
+        taxProfile
+      });
+      return {
+        payloadUtilisation,
+        breakEvenPerTonneKm: calculation.result.breakEvenPerTonneKm,
+        annualTonneKm: calculation.result.annualTonneKm
+      };
+    }),
+    loadFactorSensitivity: loadFactors.map((loadFactor) => {
+      const calculation = calculateBreakEven({
+        input: withVehicleGroupOverrides(input, { loadFactor }),
+        taxProfile
+      });
+      return {
+        loadFactor,
+        breakEvenPerLoadedKm: calculation.result.breakEvenPerLoadedKm,
+        annualRevenueExclVat: calculation.result.annualRevenueExclVat,
+        profitAfterTax: calculation.result.profitAfterTax
+      };
+    }),
+    markupSensitivity: markups.map((markupPercentage) => {
+      const calculation = calculateBreakEven({
+        input: withVehicleGroupOverrides(input, { markupPercentage }),
+        taxProfile
+      });
+      return {
+        markupPercentage,
+        customerRateExclVat: calculation.result.customerRateExclVat,
+        ebitBeforeTax: calculation.result.ebitBeforeTax,
+        afterTaxMargin: calculation.result.afterTaxMargin
+      };
+    }),
+    fuelPriceSensitivity: fuelPrices.map((fuelPricePerLiter) => {
+      const calculation = calculateBreakEven({
+        input: withVehicleGroupOverrides(input, { fuelPricePerLiter }),
+        taxProfile
+      });
+      return {
+        fuelPricePerLiter,
+        variableCostPerKm: calculation.result.variableCostPerKm,
+        totalAnnualCost: calculation.result.totalAnnualCost,
+        breakEvenPerLoadedKm: calculation.result.breakEvenPerLoadedKm
+      };
+    })
+  };
+}
+
+function calculateVehicleGroup(groupInput, taxProfile, index) {
+  const perVehicle = calculateSingleVehicleResult(groupInput, taxProfile);
+  const vehicleCount = groupInput.vehicleCount;
+  const vehicleSnapshot = findVehicleClass(groupInput.vehicleClassId);
+  const groupTotals = multiplyVehicleResult(perVehicle, vehicleCount);
+
+  return {
+    id: groupInput.id || `group-${index + 1}`,
+    name: groupInput.name || vehicleSnapshot.displayName,
+    vehicleClassId: groupInput.vehicleClassId,
+    vehicleClassCode: vehicleSnapshot.code,
+    vehicleClassName: vehicleSnapshot.displayName,
+    vehicleCount,
+    vehicleSnapshot,
+    input: toVehicleGroupInput(groupInput),
+    perVehicle,
+    groupTotals
+  };
+}
+
+function calculateSingleVehicleResult(input, taxProfile) {
   const annualTotalKm = input.dailyKm * input.operatingDaysPerYear;
   const loadedKmYear = annualTotalKm * input.loadFactor;
   const effectivePayloadTons = input.payloadCapacityTons * input.payloadUtilisation;
@@ -270,7 +440,7 @@ export function calculateBreakEven(payload = {}) {
   const profitAfterTax = ebitBeforeTax - businessTax;
   const afterTaxMargin = safeDivide(profitAfterTax, annualRevenueExclVat);
 
-  const result = {
+  return {
     annualTotalKm,
     loadedKmYear,
     effectivePayloadTons,
@@ -285,6 +455,7 @@ export function calculateBreakEven(payload = {}) {
     annualPerDiem,
     driverAnnualCost,
     vehicleFixedAnnualCost,
+    structuralIndirectCostsAnnual: input.structuralIndirectCostsAnnual,
     totalAnnualCost,
     breakEvenPerLoadedKm,
     breakEvenPerTonneKm,
@@ -296,139 +467,326 @@ export function calculateBreakEven(payload = {}) {
     ebitBeforeTax,
     businessTax,
     profitAfterTax,
-    afterTaxMargin,
-    companyTotals: {
-      numberOfTrucks: input.numberOfTrucks,
-      totalAnnualCost: totalAnnualCost * input.numberOfTrucks,
-      annualRevenueExclVat: annualRevenueExclVat * input.numberOfTrucks,
-      profitAfterTax: profitAfterTax * input.numberOfTrucks
-    }
-  };
-
-  return {
-    input,
-    taxProfile,
-    vehicleSnapshot: input.vehicleClassId ? findVehicleClass(input.vehicleClassId) : null,
-    result,
-    formulas: blueprintFormulaDefinitions()
+    afterTaxMargin
   };
 }
 
-export function generatePricingScenarios(payload = {}) {
-  const markups = normaliseNumberArray(
-    payload.markups ?? payload.markupPercentages ?? blueprintPricingMarkups,
-    "markups"
+function multiplyVehicleResult(result, vehicleCount) {
+  const aggregateFields = [
+    "annualTotalKm",
+    "loadedKmYear",
+    "annualTonneKm",
+    "variableAnnualCost",
+    "employerContributionAnnual",
+    "annualPerDiem",
+    "driverAnnualCost",
+    "vehicleFixedAnnualCost",
+    "structuralIndirectCostsAnnual",
+    "totalAnnualCost",
+    "annualRevenueExclVat",
+    "vatCollected",
+    "invoiceValueInclVat",
+    "ebitBeforeTax",
+    "businessTax",
+    "profitAfterTax"
+  ];
+  const totals = { ...result, vehicleCount };
+
+  for (const field of aggregateFields) {
+    totals[field] = result[field] * vehicleCount;
+  }
+
+  totals.effectivePayloadTons = result.effectivePayloadTons;
+  totals.breakEvenPerLoadedKm = safeDivide(totals.totalAnnualCost, totals.loadedKmYear);
+  totals.breakEvenPerTonneKm = safeDivide(totals.totalAnnualCost, totals.annualTonneKm);
+  totals.customerRateExclVat = safeDivide(
+    totals.annualRevenueExclVat,
+    totals.loadedKmYear
+  );
+  totals.customerRateInclVat = safeDivide(
+    totals.invoiceValueInclVat,
+    totals.loadedKmYear
+  );
+  totals.afterTaxMargin = safeDivide(totals.profitAfterTax, totals.annualRevenueExclVat);
+
+  return totals;
+}
+
+function aggregateFleetResult(input, vehicleGroupResults) {
+  const sums = sumGroupTotals(vehicleGroupResults);
+
+  requirePositiveDenominator(sums.annualTotalKm, "annualTotalKm");
+  requirePositiveDenominator(sums.loadedKmYear, "loadedKmYear");
+  requirePositiveDenominator(sums.annualTonneKm, "annualTonneKm");
+
+  const result = {
+    fleetMode: resolveFleetMode(vehicleGroupResults),
+    vehicleGroupCount: vehicleGroupResults.length,
+    vehicleCount: sums.vehicleCount,
+    annualTotalKm: sums.annualTotalKm,
+    loadedKmYear: sums.loadedKmYear,
+    effectivePayloadTons: safeDivide(sums.annualTonneKm, sums.loadedKmYear),
+    annualTonneKm: sums.annualTonneKm,
+    fuelCostPerKm: safeDivide(sums.fuelAnnualCost, sums.annualTotalKm),
+    tyresCostPerKm: safeDivide(sums.tyresAnnualCost, sums.annualTotalKm),
+    maintenanceCostPerKm: safeDivide(sums.maintenanceAnnualCost, sums.annualTotalKm),
+    roadFeesCostPerKm: safeDivide(sums.roadFeesAnnualCost, sums.annualTotalKm),
+    variableCostPerKm: safeDivide(sums.variableAnnualCost, sums.annualTotalKm),
+    variableAnnualCost: sums.variableAnnualCost,
+    employerContributionAnnual: sums.employerContributionAnnual,
+    annualPerDiem: sums.annualPerDiem,
+    driverAnnualCost: sums.driverAnnualCost,
+    vehicleFixedAnnualCost: sums.vehicleFixedAnnualCost,
+    structuralIndirectCostsAnnual: sums.structuralIndirectCostsAnnual,
+    totalAnnualCost: sums.totalAnnualCost,
+    breakEvenPerLoadedKm: safeDivide(sums.totalAnnualCost, sums.loadedKmYear),
+    breakEvenPerTonneKm: safeDivide(sums.totalAnnualCost, sums.annualTonneKm),
+    customerRateExclVat: safeDivide(sums.annualRevenueExclVat, sums.loadedKmYear),
+    customerRateInclVat: safeDivide(sums.invoiceValueInclVat, sums.loadedKmYear),
+    annualRevenueExclVat: sums.annualRevenueExclVat,
+    vatCollected: sums.vatCollected,
+    invoiceValueInclVat: sums.invoiceValueInclVat,
+    ebitBeforeTax: sums.ebitBeforeTax,
+    businessTax: sums.businessTax,
+    profitAfterTax: sums.profitAfterTax,
+    afterTaxMargin: safeDivide(sums.profitAfterTax, sums.annualRevenueExclVat),
+    vehicleGroupResults
+  };
+
+  result.companyTotals = {
+    numberOfTrucks: sums.vehicleCount,
+    vehicleGroupCount: vehicleGroupResults.length,
+    fleetMode: result.fleetMode,
+    totalAnnualCost: result.totalAnnualCost,
+    annualRevenueExclVat: result.annualRevenueExclVat,
+    profitAfterTax: result.profitAfterTax
+  };
+  result.fleetTotals = result.companyTotals;
+
+  if (vehicleGroupResults.length === 1) {
+    result.selectedVehicleClassId = input.vehicleClassId;
+  }
+
+  return result;
+}
+
+function sumGroupTotals(vehicleGroupResults) {
+  const sums = {
+    vehicleCount: 0,
+    annualTotalKm: 0,
+    loadedKmYear: 0,
+    annualTonneKm: 0,
+    fuelAnnualCost: 0,
+    tyresAnnualCost: 0,
+    maintenanceAnnualCost: 0,
+    roadFeesAnnualCost: 0,
+    variableAnnualCost: 0,
+    employerContributionAnnual: 0,
+    annualPerDiem: 0,
+    driverAnnualCost: 0,
+    vehicleFixedAnnualCost: 0,
+    structuralIndirectCostsAnnual: 0,
+    totalAnnualCost: 0,
+    annualRevenueExclVat: 0,
+    vatCollected: 0,
+    invoiceValueInclVat: 0,
+    ebitBeforeTax: 0,
+    businessTax: 0,
+    profitAfterTax: 0
+  };
+
+  for (const group of vehicleGroupResults) {
+    const totals = group.groupTotals;
+    sums.vehicleCount += group.vehicleCount;
+    sums.annualTotalKm += totals.annualTotalKm;
+    sums.loadedKmYear += totals.loadedKmYear;
+    sums.annualTonneKm += totals.annualTonneKm;
+    sums.fuelAnnualCost += group.perVehicle.fuelCostPerKm * group.perVehicle.annualTotalKm * group.vehicleCount;
+    sums.tyresAnnualCost += group.perVehicle.tyresCostPerKm * group.perVehicle.annualTotalKm * group.vehicleCount;
+    sums.maintenanceAnnualCost += group.perVehicle.maintenanceCostPerKm * group.perVehicle.annualTotalKm * group.vehicleCount;
+    sums.roadFeesAnnualCost += group.perVehicle.roadFeesCostPerKm * group.perVehicle.annualTotalKm * group.vehicleCount;
+    sums.variableAnnualCost += totals.variableAnnualCost;
+    sums.employerContributionAnnual += totals.employerContributionAnnual;
+    sums.annualPerDiem += totals.annualPerDiem;
+    sums.driverAnnualCost += totals.driverAnnualCost;
+    sums.vehicleFixedAnnualCost += totals.vehicleFixedAnnualCost;
+    sums.structuralIndirectCostsAnnual += totals.structuralIndirectCostsAnnual;
+    sums.totalAnnualCost += totals.totalAnnualCost;
+    sums.annualRevenueExclVat += totals.annualRevenueExclVat;
+    sums.vatCollected += totals.vatCollected;
+    sums.invoiceValueInclVat += totals.invoiceValueInclVat;
+    sums.ebitBeforeTax += totals.ebitBeforeTax;
+    sums.businessTax += totals.businessTax;
+    sums.profitAfterTax += totals.profitAfterTax;
+  }
+
+  return sums;
+}
+
+function normalizeVehicleGroups(payload, input, taxProfile) {
+  const raw = payload.input ?? payload.inputs ?? payload;
+  const rawGroups = raw.vehicleGroups;
+
+  if (rawGroups != null && !Array.isArray(rawGroups)) {
+    throw validationError("vehicleGroups must be an array", "vehicleGroups");
+  }
+
+  if (Array.isArray(rawGroups) && rawGroups.length === 0) {
+    throw validationError("vehicleGroups must contain at least one group", "vehicleGroups");
+  }
+
+  const fallbackVehicle = findVehicleClass(input.vehicleClassId);
+  const groupSeeds = Array.isArray(rawGroups)
+    ? rawGroups
+    : [
+        {
+          ...raw,
+          id: "group-1",
+          name:
+            input.numberOfTrucks > 1
+              ? `${fallbackVehicle.displayName} fleet`
+              : fallbackVehicle.displayName,
+          vehicleCount: input.numberOfTrucks
+        }
+      ];
+
+  return groupSeeds.map((group, index) =>
+    normalizeVehicleGroup(group, input, taxProfile, index, Array.isArray(rawGroups))
+  );
+}
+
+function normalizeVehicleGroup(rawGroup, baseInput, taxProfile, index, usesExplicitGroups) {
+  const vehicleCount = parseFiniteNumber(
+    rawGroup.vehicleCount ?? rawGroup.numberOfVehicles ?? rawGroup.numberOfTrucks ?? 1,
+    `vehicleGroups[${index}].vehicleCount`
   );
 
-  return markups.map((markupPercentage) => {
-    const calculation = calculateBreakEven({
-      ...payload,
-      input: {
-        ...(payload.input ?? payload),
-        markupPercentage
-      },
-      markupPercentage
-    });
+  if (!(vehicleCount > 0)) {
+    throw validationError(
+      `vehicleGroups[${index}].vehicleCount must be greater than zero`,
+      `vehicleGroups[${index}].vehicleCount`
+    );
+  }
 
-    return {
-      markupPercentage,
-      customerRateExclVat: calculation.result.customerRateExclVat,
-      customerRateInclVat: calculation.result.customerRateInclVat,
-      annualRevenueExclVat: calculation.result.annualRevenueExclVat,
-      vatCollected: calculation.result.vatCollected,
-      invoiceValueInclVat: calculation.result.invoiceValueInclVat,
-      ebitBeforeTax: calculation.result.ebitBeforeTax,
-      businessTax: calculation.result.businessTax,
-      profitAfterTax: calculation.result.profitAfterTax,
-      afterTaxMargin: calculation.result.afterTaxMargin
-    };
+  const merged = {
+    ...baseInput,
+    ...rawGroup,
+    numberOfTrucks: 1
+  };
+  delete merged.vehicleGroups;
+
+  const normalized = normalizeCalculationInput({
+    input: merged,
+    taxProfile
   });
+  const vehicle = findVehicleClass(normalized.vehicleClassId);
+
+  if (usesExplicitGroups) {
+    if (
+      rawGroup.payloadCapacityTons == null &&
+      rawGroup.payloadCapacityT == null &&
+      rawGroup.capacityTons == null
+    ) {
+      normalized.payloadCapacityTons = vehicle.payloadCapacityTons;
+    }
+    if (
+      rawGroup.payloadUtilisation == null &&
+      rawGroup.payloadUtilization == null &&
+      rawGroup.capacityUtilization == null
+    ) {
+      normalized.payloadUtilisation = vehicle.typicalPayloadUtilisation;
+    }
+    if (rawGroup.fuelConsumptionLPer100Km == null) {
+      normalized.fuelConsumptionLPer100Km = vehicle.typicalFuelLPer100Km;
+    }
+    if (rawGroup.ownershipOrLeasingAnnual == null) {
+      normalized.ownershipOrLeasingAnnual = vehicle.annualFixedCostProxy;
+    }
+  }
+
+  normalized.id = String(rawGroup.id || `group-${index + 1}`);
+  normalized.name = String(rawGroup.name || vehicle.displayName).trim() || vehicle.displayName;
+  normalized.vehicleCount = vehicleCount;
+
+  validateCalculationInput(normalized);
+  return normalized;
 }
 
-export function generateSensitivity(payload = {}) {
-  const input = normalizeCalculationInput(payload);
-  const taxProfile = resolveTaxProfile(payload, input);
-  const payloadUtilisations = normaliseNumberArray(
-    payload.payloadUtilisations ?? blueprintPayloadUtilisations,
-    "payloadUtilisations"
-  );
-  const loadFactors = normaliseNumberArray(
-    payload.loadFactors ?? blueprintLoadFactors,
-    "loadFactors"
-  );
-  const markups = normaliseNumberArray(
-    payload.markups ?? payload.markupPercentages ?? blueprintPricingMarkups,
-    "markups"
-  );
-  const fuelPrices = normaliseNumberArray(
-    payload.fuelPrices ?? defaultFuelPrices(input.fuelPricePerLiter),
-    "fuelPrices"
-  );
+function toVehicleGroupInput(groupInput) {
+  const fields = [
+    "id",
+    "name",
+    "vehicleClassId",
+    "vehicleCount",
+    "dailyKm",
+    "operatingDaysPerYear",
+    "loadFactor",
+    "payloadCapacityTons",
+    "payloadUtilisation",
+    "fuelConsumptionLPer100Km",
+    "fuelPricePerLiter",
+    "tyresAnnualCost",
+    "maintenanceAnnualCost",
+    "roadFeesAnnualCost",
+    "driverSalaryAnnual",
+    "driverPerDiemDaily",
+    "ownershipOrLeasingAnnual",
+    "insuranceAnnual",
+    "vehicleTaxAnnual",
+    "structuralIndirectCostsAnnual",
+    "markupPercentage",
+    "targetAfterTaxMargin"
+  ];
+  const group = {};
+
+  for (const field of fields) {
+    group[field] = groupInput[field];
+  }
+
+  return group;
+}
+
+function buildVehicleSnapshot(vehicleGroupResults) {
+  const uniqueVehicleClasses = [
+    ...new Map(
+      vehicleGroupResults.map((group) => [group.vehicleClassId, group.vehicleSnapshot])
+    ).values()
+  ];
+
+  if (uniqueVehicleClasses.length === 1) {
+    return uniqueVehicleClasses[0];
+  }
 
   return {
-    vehicleClassSensitivity: getVehicleClasses().map((vehicle) => {
-      const calculation = calculateBreakEven({
-        input: withVehicleDefaults(input, vehicle),
-        taxProfile
-      });
-      return {
-        vehicleClassId: vehicle.id,
-        vehicleClassCode: vehicle.code,
-        vehicleClassName: vehicle.displayName,
-        payloadCapacityTons: vehicle.payloadCapacityTons,
-        breakEvenPerLoadedKm: calculation.result.breakEvenPerLoadedKm,
-        breakEvenPerTonneKm: calculation.result.breakEvenPerTonneKm,
-        annualTonneKm: calculation.result.annualTonneKm
-      };
-    }),
-    payloadUtilisationSensitivity: payloadUtilisations.map((payloadUtilisation) => {
-      const calculation = calculateBreakEven({
-        input: { ...input, payloadUtilisation },
-        taxProfile
-      });
-      return {
-        payloadUtilisation,
-        breakEvenPerTonneKm: calculation.result.breakEvenPerTonneKm,
-        annualTonneKm: calculation.result.annualTonneKm
-      };
-    }),
-    loadFactorSensitivity: loadFactors.map((loadFactor) => {
-      const calculation = calculateBreakEven({
-        input: { ...input, loadFactor },
-        taxProfile
-      });
-      return {
-        loadFactor,
-        breakEvenPerLoadedKm: calculation.result.breakEvenPerLoadedKm,
-        annualRevenueExclVat: calculation.result.annualRevenueExclVat,
-        profitAfterTax: calculation.result.profitAfterTax
-      };
-    }),
-    markupSensitivity: markups.map((markupPercentage) => {
-      const calculation = calculateBreakEven({
-        input: { ...input, markupPercentage },
-        taxProfile
-      });
-      return {
-        markupPercentage,
-        customerRateExclVat: calculation.result.customerRateExclVat,
-        ebitBeforeTax: calculation.result.ebitBeforeTax,
-        afterTaxMargin: calculation.result.afterTaxMargin
-      };
-    }),
-    fuelPriceSensitivity: fuelPrices.map((fuelPricePerLiter) => {
-      const calculation = calculateBreakEven({
-        input: { ...input, fuelPricePerLiter },
-        taxProfile
-      });
-      return {
-        fuelPricePerLiter,
-        variableCostPerKm: calculation.result.variableCostPerKm,
-        totalAnnualCost: calculation.result.totalAnnualCost,
-        breakEvenPerLoadedKm: calculation.result.breakEvenPerLoadedKm
-      };
-    })
+    code: "MIXED_FLEET",
+    name: "Mixed fleet",
+    displayName: "Mixed fleet",
+    vehicleGroups: vehicleGroupResults.map((group) => ({
+      id: group.id,
+      name: group.name,
+      vehicleClassId: group.vehicleClassId,
+      vehicleClassName: group.vehicleClassName,
+      vehicleCount: group.vehicleCount
+    }))
   };
+}
+
+function resolveFleetMode(vehicleGroupResults) {
+  const vehicleCount = vehicleGroupResults.reduce(
+    (sum, group) => sum + group.vehicleCount,
+    0
+  );
+  const uniqueVehicleClassCount = new Set(
+    vehicleGroupResults.map((group) => group.vehicleClassId)
+  ).size;
+
+  if (vehicleCount <= 1 && vehicleGroupResults.length === 1) {
+    return "single_vehicle";
+  }
+  if (uniqueVehicleClassCount === 1) {
+    return "same_type_fleet";
+  }
+  return "mixed_type_fleet";
 }
 
 export function blueprintFormulaDefinitions() {
@@ -445,7 +803,9 @@ export function blueprintFormulaDefinitions() {
     ["breakEvenPerTonneKm", "totalAnnualCost / annualTonneKm"],
     ["customerRateExclVat", "breakEvenPerLoadedKm x (1 + markupPercentage)"],
     ["customerRateInclVat", "customerRateExclVat x (1 + vatRate)"],
-    ["profitAfterTax", "ebitBeforeTax - businessTax"]
+    ["profitAfterTax", "ebitBeforeTax - businessTax"],
+    ["fleetTotalAnnualCost", "sum of each vehicle group annual cost x vehicle count"],
+    ["fleetBreakEvenPerLoadedKm", "fleetTotalAnnualCost / fleetLoadedKmYear"]
   ].map(([field, formula]) => ({
     field,
     formula,
@@ -700,6 +1060,30 @@ function withVehicleDefaults(input, vehicle) {
     fuelConsumptionLPer100Km: vehicle.typicalFuelLPer100Km,
     ownershipOrLeasingAnnual: vehicle.annualFixedCostProxy
   };
+}
+
+function withVehicleGroupOverrides(input, overrides) {
+  if (!Array.isArray(input.vehicleGroups) || input.vehicleGroups.length === 0) {
+    return {
+      ...input,
+      ...overrides
+    };
+  }
+
+  return {
+    ...input,
+    ...overrides,
+    vehicleGroups: input.vehicleGroups.map((group) => ({
+      ...group,
+      ...overrides
+    }))
+  };
+}
+
+function withoutVehicleGroups(input) {
+  const nextInput = { ...input };
+  delete nextInput.vehicleGroups;
+  return nextInput;
 }
 
 function defaultFuelPrices(currentFuelPrice) {

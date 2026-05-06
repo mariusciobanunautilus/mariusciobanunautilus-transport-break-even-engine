@@ -11,12 +11,20 @@ The app converts transport assumptions into:
 - business-tax-adjusted profit
 - sensitivity tables for vehicles, payload, load factor, markup and fuel
 
+The blueprint engine now supports three fleet strategies:
+
+- single vehicle
+- multiple vehicles of the same type
+- mixed fleets with separate vehicle groups
+
+Mixed fleets are calculated group by group first, then aggregated into fleet-level cost, break-even, rate and profit outputs. The UI formats number inputs and displayed outputs to two decimals while the engine keeps full precision internally.
+
 ## Current Implementation Sprints
 
 1. Backend calculation preview engine
    - Pure blueprint calculation engine in `shared/blueprintEngine.js`
    - `POST /api/calculations/preview`
-   - Baseline payload tests
+   - Baseline, same-type fleet and mixed-fleet tests
 
 2. Reference and tax cascade APIs
    - `GET /api/countries`
@@ -39,7 +47,7 @@ The app converts transport assumptions into:
 5. Frontend workflow
    - Dashboard
    - Company & Tax
-   - Inputs
+   - Fleet inputs
    - Break-even
    - Pricing
    - Sensitivity

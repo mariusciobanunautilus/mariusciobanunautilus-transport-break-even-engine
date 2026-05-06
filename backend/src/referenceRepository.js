@@ -179,19 +179,29 @@ export async function getVehicleClasses() {
      ORDER BY id`
   );
 
-  return result.rows.map((row) => ({
-    id: Number(row.id),
-    code: row.code,
-    name: row.display_name,
-    displayName: row.display_name,
-    grossWeightTons: Number(row.gvw_t),
-    payloadCapacityTons: Number(row.payload_capacity_t),
-    typicalPayloadUtilisation: Number(row.base_payload_utilization),
-    typicalFuelLPer100Km: Number(row.fuel_consumption_l_per_100km),
-    annualFixedCostProxy: Number(row.fixed_vehicle_annual_cost),
-    regulatoryNote: row.validation_note,
-    sourceUrl: row.source_url
-  }));
+  const fallbackVehicleByCode = new Map(
+    getFallbackVehicleClasses().map((vehicle) => [vehicle.code, vehicle])
+  );
+
+  return result.rows.map((row) => {
+    const fallbackVehicle = fallbackVehicleByCode.get(row.code);
+    const displayName = fallbackVehicle?.displayName ?? row.display_name;
+
+    return {
+      id: Number(row.id),
+      code: row.code,
+      name: displayName,
+      displayName,
+      grossWeightTons: Number(row.gvw_t),
+      payloadCapacityTons: Number(row.payload_capacity_t),
+      typicalPayloadUtilisation: Number(row.base_payload_utilization),
+      typicalFuelLPer100Km: Number(row.fuel_consumption_l_per_100km),
+      annualFixedCostProxy: Number(row.fixed_vehicle_annual_cost),
+      bestFor: fallbackVehicle?.bestFor ?? row.validation_note,
+      regulatoryNote: row.validation_note,
+      sourceUrl: row.source_url
+    };
+  });
 }
 
 export async function getTaxProfiles() {

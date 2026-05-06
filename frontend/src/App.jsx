@@ -67,6 +67,14 @@ const inputSections = [
   }
 ];
 
+const vehicleInputSections = inputSections.filter(
+  (section) => section.title !== "Pricing"
+);
+
+const vehicleGroupFields = vehicleInputSections.flatMap((section) =>
+  section.fields.map(([field]) => field)
+);
+
 export default function App() {
   const [reference, setReference] = useState(fallbackReference);
   const [activePage, setActivePage] = useState("dashboard");
@@ -104,12 +112,16 @@ export default function App() {
       ),
     [input.businessModelId, reference.businessModels]
   );
+  const fleetGroups = useMemo(
+    () => getFleetGroups(input, reference.vehicleClasses),
+    [input, reference.vehicleClasses]
+  );
   const selectedVehicle = useMemo(
     () =>
       reference.vehicleClasses.find(
-        (vehicleClass) => vehicleClass.id === input.vehicleClassId
+        (vehicleClass) => vehicleClass.id === fleetGroups[0]?.vehicleClassId
       ),
-    [input.vehicleClassId, reference.vehicleClasses]
+    [fleetGroups, reference.vehicleClasses]
   );
   const selectedTaxProfile = useMemo(
     () =>
@@ -131,7 +143,8 @@ export default function App() {
   }, []);
 
   const previewIsStale = calculation
-    ? JSON.stringify(calculation.input) !== JSON.stringify(normalizedPreviewInput(input))
+    ? JSON.stringify(calculation.input) !==
+      JSON.stringify(normalizedPreviewInput(input, reference.vehicleClasses))
     : true;
 
   async function loadReferenceData() {
@@ -154,7 +167,7 @@ export default function App() {
   function buildPayload(overrides = {}) {
     return {
       runName,
-      input: normalizedPreviewInput({ ...input, ...overrides }),
+      input: normalizedPreviewInput({ ...input, ...overrides }, reference.vehicleClasses),
       taxProfile: {
         ...selectedTaxProfile,
         vatRegistered: input.vatRegistered
@@ -268,7 +281,13 @@ export default function App() {
     if (value !== "" && !Number.isFinite(normalized)) return;
     setInput((current) => ({
       ...current,
-      [field]: normalized
+      [field]: normalized,
+      vehicleGroups: shouldApplyFieldToVehicleGroups(field)
+        ? getFleetGroups(current, reference.vehicleClasses).map((group) => ({
+            ...group,
+            [field]: normalized
+          }))
+        : current.vehicleGroups
     }));
     setStatus("Unsaved changes");
   }
@@ -291,7 +310,11 @@ export default function App() {
       countryId: nextCountryId,
       companyTypeId: nextCompanyType.id,
       vatRegistered: nextTaxProfile.vatRegisteredDefault,
-      vehicleTaxAnnual: nextTaxProfile.vehicleTaxDefaultAnnual
+      vehicleTaxAnnual: nextTaxProfile.vehicleTaxDefaultAnnual,
+      vehicleGroups: getFleetGroups(current, reference.vehicleClasses).map((group) => ({
+        ...group,
+        vehicleTaxAnnual: nextTaxProfile.vehicleTaxDefaultAnnual
+      }))
     }));
     setStatus("Country defaults applied");
   }
@@ -309,25 +332,77 @@ export default function App() {
       ...current,
       companyTypeId: nextCompanyTypeId,
       vatRegistered: nextTaxProfile.vatRegisteredDefault,
-      vehicleTaxAnnual: nextTaxProfile.vehicleTaxDefaultAnnual
+      vehicleTaxAnnual: nextTaxProfile.vehicleTaxDefaultAnnual,
+      vehicleGroups: getFleetGroups(current, reference.vehicleClasses).map((group) => ({
+        ...group,
+        vehicleTaxAnnual: nextTaxProfile.vehicleTaxDefaultAnnual
+      }))
     }));
     setStatus("Company type defaults applied");
   }
 
-  function updateVehicle(vehicleClassId) {
-    const vehicle = reference.vehicleClasses.find(
-      (item) => item.id === Number(vehicleClassId)
-    );
-    if (!vehicle) return;
+  function updateVehicleGroup(index, field, value) {
+    setInput((current) => {
+      const groups = getFleetGroups(current, reference.vehicleClasses);
+      const nextGroups = groups.map((group, groupIndex) => {
+        if (groupIndex !== index) return group;
 
-    setInput((current) => ({
-      ...current,
-      vehicleClassId: vehicle.id,
-      payloadCapacityTons: vehicle.payloadCapacityTons,
-      payloadUtilisation: vehicle.typicalPayloadUtilisation,
-      fuelConsumptionLPer100Km: vehicle.typicalFuelLPer100Km
-    }));
-    setStatus("Vehicle defaults applied");
+        if (field === "name") {
+          return {
+            ...group,
+            name: value
+          };
+        }
+
+        const normalized = value === "" ? "" : Number(value);
+        if (value !== "" && !Number.isFinite(normalized)) return group;
+
+        if (field === "vehicleClassId") {
+          const vehicle = reference.vehicleClasses.find(
+            (item) => item.id === Number(value)
+          );
+          const previousVehicle = reference.vehicleClasses.find(
+            (item) => item.id === Number(group.vehicleClassId)
+          );
+          return vehicle
+            ? applyVehicleDefaultsToGroup(group, vehicle, previousVehicle)
+            : group;
+        }
+
+        return {
+          ...group,
+          [field]: normalized
+        };
+      });
+
+      return syncInputWithFleetGroups(current, nextGroups);
+    });
+    setStatus("Unsaved fleet changes");
+  }
+
+  function addVehicleGroup() {
+    setInput((current) => {
+      const groups = getFleetGroups(current, reference.vehicleClasses);
+      const sourceGroup = groups[groups.length - 1] || getFleetGroups(current, reference.vehicleClasses)[0];
+      const nextGroup = {
+        ...sourceGroup,
+        id: `group-${Date.now()}`,
+        name: `Vehicle group ${groups.length + 1}`,
+        vehicleCount: 1
+      };
+      return syncInputWithFleetGroups(current, [...groups, nextGroup]);
+    });
+    setStatus("Vehicle group added");
+  }
+
+  function removeVehicleGroup(index) {
+    setInput((current) => {
+      const groups = getFleetGroups(current, reference.vehicleClasses);
+      if (groups.length <= 1) return current;
+      const nextGroups = groups.filter((_, groupIndex) => groupIndex !== index);
+      return syncInputWithFleetGroups(current, nextGroups);
+    });
+    setStatus("Vehicle group removed");
   }
 
   const result = calculation?.result;
@@ -377,6 +452,7 @@ export default function App() {
 
         {activePage === "dashboard" && (
           <DashboardPage
+            fleetGroups={fleetGroups}
             input={input}
             pricingScenarios={pricingScenarios}
             result={result}
@@ -405,11 +481,13 @@ export default function App() {
 
         {activePage === "inputs" && (
           <TransportInputsPage
+            addVehicleGroup={addVehicleGroup}
+            fleetGroups={fleetGroups}
             input={input}
+            removeVehicleGroup={removeVehicleGroup}
             result={result}
-            selectedVehicle={selectedVehicle}
+            updateVehicleGroup={updateVehicleGroup}
             updateInput={updateInput}
-            updateVehicle={updateVehicle}
             vehicles={reference.vehicleClasses}
           />
         )}
@@ -451,6 +529,7 @@ export default function App() {
 }
 
 function DashboardPage({
+  fleetGroups,
   input,
   pricingScenarios,
   result,
@@ -472,7 +551,7 @@ function DashboardPage({
           <WorkflowList
             rows={[
               ["Company profile", selectedCountry?.name || "Not selected", "company"],
-              ["Vehicle and load", selectedVehicle?.displayName || "Not selected", "inputs"],
+              ["Fleet setup", fleetModeLabel(result?.fleetMode, fleetGroups), "inputs"],
               ["Break-even result", result ? money(result.breakEvenPerLoadedKm, 4) : "Needs calculation", "results"],
               ["Pricing scenarios", `${pricingScenarios.length} generated`, "pricing"]
             ]}
@@ -481,11 +560,11 @@ function DashboardPage({
         </Card>
 
         <Card title="Current Assumptions">
-          <Fact label="Trucks" value={format(input.numberOfTrucks, 0)} />
-          <Fact label="Daily km" value={format(input.dailyKm, 0)} />
-          <Fact label="Operating days" value={format(input.operatingDaysPerYear, 0)} />
-          <Fact label="Load factor" value={percent(input.loadFactor)} />
-          <Fact label="Payload utilisation" value={percent(input.payloadUtilisation)} />
+          <Fact label="Vehicles" value={format(result?.vehicleCount ?? input.numberOfTrucks)} />
+          <Fact label="Vehicle groups" value={format(result?.vehicleGroupCount ?? fleetGroups.length)} />
+          <Fact label="Primary vehicle" value={selectedVehicle?.displayName || "Not selected"} />
+          <Fact label="Loaded km/year" value={format(result?.loadedKmYear)} />
+          <Fact label="Tonne-km/year" value={format(result?.annualTonneKm)} />
         </Card>
       </section>
     </div>
@@ -527,13 +606,7 @@ function CompanyTaxPage({
             options={businessModels.map((model) => [model.id, model.name])}
             value={input.businessModelId}
           />
-          <NumberField
-            field="numberOfTrucks"
-            label="Number of trucks"
-            onChange={updateInput}
-            unit="trucks"
-            value={input.numberOfTrucks}
-          />
+          <Fact label="Fleet vehicles" value={format(input.numberOfTrucks)} />
           <label className="checkbox-row">
             <input
               checked={Boolean(input.vatRegistered)}
@@ -571,43 +644,116 @@ function CompanyTaxPage({
 }
 
 function TransportInputsPage({
+  addVehicleGroup,
+  fleetGroups,
   input,
+  removeVehicleGroup,
   result,
-  selectedVehicle,
   updateInput,
-  updateVehicle,
+  updateVehicleGroup,
   vehicles
 }) {
   return (
     <div className="page-stack">
       <section className="form-grid">
-        <Card title="Vehicle Class">
-          <SelectField
-            label="Vehicle"
-            onChange={updateVehicle}
-            options={vehicles.map((vehicle) => [vehicle.id, vehicle.displayName])}
-            value={input.vehicleClassId}
-          />
-          <Fact label="Default payload" value={`${format(selectedVehicle?.payloadCapacityTons, 1)} t`} />
+        <Card title="Fleet Strategy">
+          <Fact label="Scenario" value={fleetModeLabel(result?.fleetMode, fleetGroups)} />
+          <Fact label="Vehicle groups" value={format(fleetGroups.length)} />
           <Fact
-            label="Typical utilisation"
-            value={percent(selectedVehicle?.typicalPayloadUtilisation)}
+            label="Vehicles"
+            value={format(result?.vehicleCount ?? input.numberOfTrucks)}
           />
-          <p className="helper-text">{selectedVehicle?.regulatoryNote}</p>
+          <button className="secondary-button inline-action" onClick={addVehicleGroup} type="button">
+            Add vehicle group
+          </button>
         </Card>
 
-        <Card title="Computed Preview">
-          <Fact label="Annual total km" value={format(result?.annualTotalKm, 0)} />
-          <Fact label="Loaded km" value={format(result?.loadedKmYear, 0)} />
-          <Fact label="Effective payload" value={`${format(result?.effectivePayloadTons, 2)} t`} />
-          <Fact label="Annual tonne-km" value={format(result?.annualTonneKm, 0)} />
+        <Card title="Computed Fleet Preview">
+          <Fact label="Annual total km" value={format(result?.annualTotalKm)} />
+          <Fact label="Loaded km" value={format(result?.loadedKmYear)} />
+          <Fact label="Average effective payload" value={`${format(result?.effectivePayloadTons)} t`} />
+          <Fact label="Annual tonne-km" value={format(result?.annualTonneKm)} />
         </Card>
       </section>
 
-      {inputSections.map((section) => (
-        <Card key={section.title} title={section.title}>
-          <div className="field-grid">
-            {section.fields.map(([field, label, unit]) => (
+      {fleetGroups.map((group, index) => {
+        const selectedVehicle = vehicles.find(
+          (vehicle) => vehicle.id === Number(group.vehicleClassId)
+        );
+        const groupResult = result?.vehicleGroupResults?.find(
+          (row) => row.id === group.id
+        );
+
+        return (
+          <Card key={group.id || index} title={group.name || `Vehicle group ${index + 1}`}>
+            <div className="group-toolbar">
+              <TextField
+                label="Group name"
+                onChange={(value) => updateVehicleGroup(index, "name", value)}
+                value={group.name}
+              />
+              <SelectField
+                label="Vehicle type"
+                onChange={(value) => updateVehicleGroup(index, "vehicleClassId", value)}
+                options={vehicles.map((vehicle) => [
+                  vehicle.id,
+                  `${vehicle.displayName} - ${format(vehicle.payloadCapacityTons)} t payload`
+                ])}
+                value={group.vehicleClassId}
+              />
+              <NumberField
+                field="vehicleCount"
+                label="Vehicles in group"
+                onChange={(field, value) => updateVehicleGroup(index, field, value)}
+                unit="vehicles"
+                value={group.vehicleCount}
+              />
+            </div>
+
+            <div className="group-summary">
+              <Fact label="Best for" value={selectedVehicle?.bestFor || "n/a"} />
+              <Fact label="Group annual cost" value={money(groupResult?.groupTotals?.totalAnnualCost)} />
+              <Fact label="Group break-even" value={money(groupResult?.groupTotals?.breakEvenPerLoadedKm)} />
+            </div>
+
+            {vehicleInputSections.map((section) => (
+              <div className="subsection" key={`${group.id}-${section.title}`}>
+                <h3>{section.title}</h3>
+                <div className="field-grid">
+                  {section.fields.map(([field, label, unit]) => (
+                    <NumberField
+                      field={field}
+                      key={field}
+                      label={label}
+                      onChange={(fieldName, value) =>
+                        updateVehicleGroup(index, fieldName, value)
+                      }
+                      unit={unit}
+                      value={group[field]}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            {fleetGroups.length > 1 && (
+              <button
+                className="danger-link"
+                onClick={() => removeVehicleGroup(index)}
+                type="button"
+              >
+                Remove group
+              </button>
+            )}
+          </Card>
+        );
+      })}
+
+      <Card title="Fleet Pricing">
+        <div className="field-grid compact-fields">
+          {inputSections
+            .find((section) => section.title === "Pricing")
+            .fields.map(([field, label, unit]) => (
               <NumberField
                 field={field}
                 key={field}
@@ -618,8 +764,7 @@ function TransportInputsPage({
               />
             ))}
           </div>
-        </Card>
-      ))}
+      </Card>
     </div>
   );
 }
@@ -645,7 +790,7 @@ function BreakEvenResultsPage({ calculation }) {
           <Fact label="Vehicle fixed cost" value={money(result.vehicleFixedAnnualCost, 0)} />
           <Fact
             label="Structural indirect cost"
-            value={money(calculation.input.structuralIndirectCostsAnnual, 0)}
+            value={money(result.structuralIndirectCostsAnnual)}
           />
         </Card>
 
@@ -657,6 +802,31 @@ function BreakEvenResultsPage({ calculation }) {
           <Fact label="After-tax margin" value={percent(result.afterTaxMargin)} />
         </Card>
       </section>
+
+      {result.vehicleGroupResults?.length > 0 && (
+        <Card title="Vehicle Group Breakdown">
+          <DataTable
+            columns={[
+              "Group",
+              "Vehicle type",
+              "Vehicles",
+              "Annual cost",
+              "Break-even",
+              "Customer rate",
+              "Profit after tax"
+            ]}
+            rows={result.vehicleGroupResults.map((group) => [
+              group.name,
+              group.vehicleClassName,
+              format(group.vehicleCount),
+              money(group.groupTotals.totalAnnualCost),
+              money(group.groupTotals.breakEvenPerLoadedKm),
+              money(group.groupTotals.customerRateExclVat),
+              money(group.groupTotals.profitAfterTax)
+            ])}
+          />
+        </Card>
+      )}
 
       <Card title="Formula Audit">
         <div className="formula-list">
@@ -767,13 +937,14 @@ function VehicleClassesPage({ vehicles }) {
   return (
     <Card title="Vehicle Classes">
       <DataTable
-        columns={["Code", "Name", "GVW", "Payload", "Fuel", "Note"]}
+        columns={["Code", "Name", "Best for", "GVW", "Payload", "Fuel", "Note"]}
         rows={vehicles.map((vehicle) => [
           vehicle.code,
           vehicle.displayName,
-          `${format(vehicle.grossWeightTons, 1)} t`,
-          `${format(vehicle.payloadCapacityTons, 1)} t`,
-          `${format(vehicle.typicalFuelLPer100Km, 1)} l/100km`,
+          vehicle.bestFor,
+          `${format(vehicle.grossWeightTons)} t`,
+          `${format(vehicle.payloadCapacityTons)} t`,
+          `${format(vehicle.typicalFuelLPer100Km)} l/100km`,
           vehicle.regulatoryNote
         ])}
       />
@@ -869,12 +1040,21 @@ function NumberField({ field, label, onChange, unit, value }) {
         <input
           inputMode="decimal"
           onChange={(event) => onChange(field, event.target.value)}
-          step="any"
+          step="0.01"
           type="number"
-          value={value ?? ""}
+          value={formatInputNumber(value)}
         />
         <small>{unit}</small>
       </div>
+    </label>
+  );
+}
+
+function TextField({ label, onChange, value }) {
+  return (
+    <label className="text-field">
+      <span>{label}</span>
+      <input onChange={(event) => onChange(event.target.value)} value={value ?? ""} />
     </label>
   );
 }
@@ -946,6 +1126,160 @@ function EmptyState({ text, title }) {
   );
 }
 
+function getFleetGroups(input, vehicles = []) {
+  if (Array.isArray(input.vehicleGroups) && input.vehicleGroups.length > 0) {
+    return input.vehicleGroups.map((group, index) =>
+      normalizeFleetGroupForUi(group, input, vehicles, index)
+    );
+  }
+
+  return [
+    normalizeFleetGroupForUi(
+      {
+        ...input,
+        id: "group-1",
+        name:
+          vehicles.find((vehicle) => vehicle.id === Number(input.vehicleClassId))
+            ?.displayName || "Vehicle group 1",
+        vehicleCount: input.numberOfTrucks || 1
+      },
+      input,
+      vehicles,
+      0
+    )
+  ];
+}
+
+function normalizeFleetGroupForUi(group, input, vehicles, index) {
+  const vehicle =
+    vehicles.find((item) => item.id === Number(group.vehicleClassId)) ||
+    vehicles.find((item) => item.id === Number(input.vehicleClassId)) ||
+    vehicles[0];
+
+  return {
+    id: group.id || `group-${index + 1}`,
+    name: group.name || vehicle?.displayName || `Vehicle group ${index + 1}`,
+    vehicleClassId: Number(group.vehicleClassId ?? vehicle?.id ?? input.vehicleClassId),
+    vehicleCount: Number(group.vehicleCount ?? group.numberOfTrucks ?? 1),
+    dailyKm: Number(group.dailyKm ?? input.dailyKm),
+    operatingDaysPerYear: Number(
+      group.operatingDaysPerYear ?? input.operatingDaysPerYear
+    ),
+    loadFactor: Number(group.loadFactor ?? input.loadFactor),
+    payloadCapacityTons: Number(
+      group.payloadCapacityTons ?? vehicle?.payloadCapacityTons ?? input.payloadCapacityTons
+    ),
+    payloadUtilisation: Number(
+      group.payloadUtilisation ??
+        vehicle?.typicalPayloadUtilisation ??
+        input.payloadUtilisation
+    ),
+    fuelConsumptionLPer100Km: Number(
+      group.fuelConsumptionLPer100Km ??
+        vehicle?.typicalFuelLPer100Km ??
+        input.fuelConsumptionLPer100Km
+    ),
+    fuelPricePerLiter: Number(group.fuelPricePerLiter ?? input.fuelPricePerLiter),
+    tyresAnnualCost: Number(group.tyresAnnualCost ?? input.tyresAnnualCost),
+    maintenanceAnnualCost: Number(
+      group.maintenanceAnnualCost ?? input.maintenanceAnnualCost
+    ),
+    roadFeesAnnualCost: Number(group.roadFeesAnnualCost ?? input.roadFeesAnnualCost),
+    driverSalaryAnnual: Number(group.driverSalaryAnnual ?? input.driverSalaryAnnual),
+    driverPerDiemDaily: Number(group.driverPerDiemDaily ?? input.driverPerDiemDaily),
+    ownershipOrLeasingAnnual: Number(
+      group.ownershipOrLeasingAnnual ??
+        vehicle?.annualFixedCostProxy ??
+        input.ownershipOrLeasingAnnual
+    ),
+    insuranceAnnual: Number(group.insuranceAnnual ?? input.insuranceAnnual),
+    vehicleTaxAnnual: Number(group.vehicleTaxAnnual ?? input.vehicleTaxAnnual),
+    structuralIndirectCostsAnnual: Number(
+      group.structuralIndirectCostsAnnual ?? input.structuralIndirectCostsAnnual
+    ),
+    markupPercentage: Number(group.markupPercentage ?? input.markupPercentage),
+    targetAfterTaxMargin: Number(
+      group.targetAfterTaxMargin ?? input.targetAfterTaxMargin
+    )
+  };
+}
+
+function syncInputWithFleetGroups(input, groups) {
+  const firstGroup = groups[0] || getFleetGroups(input)[0];
+  const nextInput = {
+    ...input,
+    ...copyGroupFieldsToInput(firstGroup),
+    numberOfTrucks: groups.reduce(
+      (sum, group) => sum + (Number(group.vehicleCount) || 0),
+      0
+    ),
+    vehicleClassId: firstGroup.vehicleClassId,
+    vehicleGroups: groups
+  };
+
+  return nextInput;
+}
+
+function copyGroupFieldsToInput(group) {
+  const fields = [
+    "vehicleClassId",
+    ...vehicleGroupFields,
+    "markupPercentage",
+    "targetAfterTaxMargin"
+  ];
+  const nextFields = {};
+
+  for (const field of fields) {
+    nextFields[field] = group[field];
+  }
+
+  return nextFields;
+}
+
+function applyVehicleDefaultsToGroup(group, vehicle, previousVehicle) {
+  const shouldRenameGroup =
+    !group.name ||
+    group.name === previousVehicle?.displayName ||
+    /^Vehicle group \d+$/.test(group.name);
+
+  return {
+    ...group,
+    vehicleClassId: vehicle.id,
+    name: shouldRenameGroup ? vehicle.displayName : group.name,
+    payloadCapacityTons: vehicle.payloadCapacityTons,
+    payloadUtilisation: vehicle.typicalPayloadUtilisation,
+    fuelConsumptionLPer100Km: vehicle.typicalFuelLPer100Km,
+    ownershipOrLeasingAnnual: vehicle.annualFixedCostProxy
+  };
+}
+
+function shouldApplyFieldToVehicleGroups(field) {
+  return [
+    ...vehicleGroupFields,
+    "markupPercentage",
+    "targetAfterTaxMargin"
+  ].includes(field);
+}
+
+function fleetModeLabel(mode, fleetGroups = []) {
+  if (mode === "mixed_type_fleet") return "Mixed vehicle types";
+  if (mode === "same_type_fleet") return "Multiple vehicles, same type";
+  if (mode === "single_vehicle") return "Single vehicle";
+
+  const uniqueVehicleClasses = new Set(
+    fleetGroups.map((group) => Number(group.vehicleClassId))
+  );
+  const vehicleCount = fleetGroups.reduce(
+    (sum, group) => sum + (Number(group.vehicleCount) || 0),
+    0
+  );
+
+  if (vehicleCount <= 1) return "Single vehicle";
+  return uniqueVehicleClasses.size > 1
+    ? "Mixed vehicle types"
+    : "Multiple vehicles, same type";
+}
+
 async function apiRequest(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     method: options.method || "GET",
@@ -970,29 +1304,42 @@ async function apiRequest(path, options = {}) {
   return response.json();
 }
 
-function normalizedPreviewInput(input) {
+function normalizedPreviewInput(input, vehicles = []) {
+  const vehicleGroups = getFleetGroups(input, vehicles);
+
   return {
     ...input,
+    ...copyGroupFieldsToInput(vehicleGroups[0]),
+    numberOfTrucks: vehicleGroups.reduce(
+      (sum, group) => sum + (Number(group.vehicleCount) || 0),
+      0
+    ),
+    vehicleGroups,
     vatRegistered: Boolean(input.vatRegistered)
   };
 }
 
-function money(value, digits = 2) {
+function money(value) {
   if (value == null || Number.isNaN(Number(value))) return "n/a";
-  return `EUR ${format(value, digits)}`;
+  return `EUR ${format(value)}`;
 }
 
-function percent(value, digits = 1) {
+function percent(value) {
   if (value == null || Number.isNaN(Number(value))) return "n/a";
-  return `${format(Number(value) * 100, digits)}%`;
+  return `${format(Number(value) * 100)}%`;
 }
 
-function format(value, digits = 2) {
+function format(value) {
   if (value == null || Number.isNaN(Number(value))) return "n/a";
   return Number(value).toLocaleString("en-US", {
-    maximumFractionDigits: digits,
-    minimumFractionDigits: digits
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2
   });
+}
+
+function formatInputNumber(value) {
+  if (value === "" || value == null || Number.isNaN(Number(value))) return "";
+  return Number(value).toFixed(2);
 }
 
 function dateTime(value) {
