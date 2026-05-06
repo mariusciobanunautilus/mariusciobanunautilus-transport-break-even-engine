@@ -604,9 +604,9 @@ function DashboardPage({
       </section>
 
       <section className="summary-grid">
-        <Kpi label="Annual cost" value={money(result?.totalAnnualCost)} unit="fleet total" />
-        <Kpi label="Break-even" value={money(result?.breakEvenPerLoadedKm)} unit="EUR/loaded km" />
-        <Kpi label="Customer rate" value={money(result?.customerRateExclVat)} unit="excl. VAT" />
+        <Kpi label="Global annual cost" value={money(result?.totalAnnualCost)} unit="EUR/year" />
+        <Kpi label="Global break-even" value={money(result?.breakEvenPerLoadedKm)} unit="EUR/loaded km" />
+        <Kpi label="Global tonne-km" value={money(result?.breakEvenPerTonneKm)} unit="EUR/t-km" />
         <Kpi label="After tax profit" value={money(result?.profitAfterTax)} unit={percent(result?.afterTaxMargin)} />
       </section>
 
@@ -619,15 +619,44 @@ function DashboardPage({
         <MetricTile label="VAT" value={vatRegistered ? percent(selectedTaxProfile?.vatRate) : "0.00%"} />
       </section>
 
+      <section className="dashboard-panel">
+        <div className="panel-heading">
+          <h2>Break-even By Fleet Group</h2>
+          <span>Global: {money(result?.breakEvenPerLoadedKm)} / loaded km</span>
+        </div>
+        <DataTable
+          columns={[
+            "Group",
+            "Vehicle type",
+            "Vehicles",
+            "Annual cost",
+            "Break-even loaded km",
+            "Break-even tonne-km",
+            "Customer rate",
+            "Profit after tax"
+          ]}
+          rows={groupRows.map((group) => [
+            group.name,
+            group.vehicleClassName,
+            formatCount(group.vehicleCount),
+            money(group.totalAnnualCost),
+            money(group.breakEvenPerLoadedKm),
+            money(group.breakEvenPerTonneKm),
+            money(group.customerRateExclVat),
+            money(group.profitAfterTax)
+          ])}
+        />
+      </section>
+
       <section className="dashboard-layout">
-        <section className="dashboard-panel dashboard-panel-wide">
+        <section className="dashboard-panel">
           <div className="panel-heading">
-            <h2>Fleet Groups</h2>
+            <h2>Fleet Mix</h2>
             <span>{fleetStats.modeLabel}</span>
           </div>
           <div className="fleet-group-list">
             {groupRows.map((group) => (
-              <FleetDashboardRow group={group} key={group.id} />
+              <FleetMixRow group={group} key={group.id} />
             ))}
           </div>
         </section>
@@ -903,7 +932,8 @@ function BreakEvenResultsPage({ calculation }) {
               "Vehicle type",
               "Vehicles",
               "Annual cost",
-              "Break-even",
+              "Break-even loaded km",
+              "Break-even tonne-km",
               "Customer rate",
               "Profit after tax"
             ]}
@@ -913,6 +943,7 @@ function BreakEvenResultsPage({ calculation }) {
               formatCount(group.vehicleCount),
               money(group.groupTotals.totalAnnualCost),
               money(group.groupTotals.breakEvenPerLoadedKm),
+              money(group.groupTotals.breakEvenPerTonneKm),
               money(group.groupTotals.customerRateExclVat),
               money(group.groupTotals.profitAfterTax)
             ])}
@@ -1133,9 +1164,9 @@ function MetricTile({ label, value }) {
   );
 }
 
-function FleetDashboardRow({ group }) {
+function FleetMixRow({ group }) {
   return (
-    <article className="fleet-dashboard-row">
+    <article className="fleet-mix-row">
       <div className="fleet-row-main">
         <strong>{group.name}</strong>
         <span>{group.vehicleClassName}</span>
@@ -1143,12 +1174,10 @@ function FleetDashboardRow({ group }) {
           <span style={{ width: `${group.costShare}%` }} />
         </div>
       </div>
-      <MetricTile label="Vehicles" value={formatCount(group.vehicleCount)} />
-      <MetricTile label="Daily km" value={format(group.dailyKm)} />
-      <MetricTile label="Load" value={percent(group.loadFactor)} />
-      <MetricTile label="Payload" value={`${format(group.effectivePayloadTons)} t`} />
-      <MetricTile label="Annual cost" value={money(group.totalAnnualCost)} />
-      <MetricTile label="Break-even" value={money(group.breakEvenPerLoadedKm)} />
+      <div className="fleet-mix-values">
+        <span>{formatCount(group.vehicleCount)} vehicles</span>
+        <strong>{format(group.costShare)}%</strong>
+      </div>
     </article>
   );
 }
@@ -1452,6 +1481,9 @@ function buildDashboardGroupRows(fleetGroups, result) {
         Number(group.payloadCapacityTons || 0) * Number(group.payloadUtilisation || 0),
       totalAnnualCost,
       breakEvenPerLoadedKm: resultGroup?.groupTotals?.breakEvenPerLoadedKm,
+      breakEvenPerTonneKm: resultGroup?.groupTotals?.breakEvenPerTonneKm,
+      customerRateExclVat: resultGroup?.groupTotals?.customerRateExclVat,
+      profitAfterTax: resultGroup?.groupTotals?.profitAfterTax,
       costShare: clampPercent(safeRatio(totalAnnualCost, totalCost) * 100)
     };
   });
