@@ -5,7 +5,10 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node src/server.js"
+    "dev": "node src/server.js",
+    "db:migrate": "node scripts/migrate.js",
+    "db:seed": "node scripts/migrate.js",
+    "test": "node --test"
   },
   "dependencies": {
     "@transport-break-even/shared": "file:../shared",

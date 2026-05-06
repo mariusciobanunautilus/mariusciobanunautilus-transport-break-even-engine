@@ -77,6 +77,52 @@ CREATE TABLE IF NOT EXISTS calculation_runs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE tax_rules
+  ADD COLUMN IF NOT EXISTS source_name TEXT DEFAULT 'Seeded modelling defaults',
+  ADD COLUMN IF NOT EXISTS source_as_of DATE,
+  ADD COLUMN IF NOT EXISTS last_reviewed_at DATE,
+  ADD COLUMN IF NOT EXISTS valid_from DATE,
+  ADD COLUMN IF NOT EXISTS valid_to DATE,
+  ADD COLUMN IF NOT EXISTS rule_status TEXT DEFAULT 'indicative';
+
+ALTER TABLE calculation_runs
+  ADD COLUMN IF NOT EXISTS run_name TEXT,
+  ADD COLUMN IF NOT EXISTS input_snapshot JSONB,
+  ADD COLUMN IF NOT EXISTS tax_snapshot JSONB,
+  ADD COLUMN IF NOT EXISTS vehicle_snapshot JSONB,
+  ADD COLUMN IF NOT EXISTS created_by TEXT;
+
+CREATE TABLE IF NOT EXISTS calculation_results (
+  id BIGSERIAL PRIMARY KEY,
+  calculation_run_id BIGINT NOT NULL REFERENCES calculation_runs(id) ON DELETE CASCADE,
+  result_snapshot JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS pricing_scenarios (
+  id BIGSERIAL PRIMARY KEY,
+  calculation_run_id BIGINT NOT NULL REFERENCES calculation_runs(id) ON DELETE CASCADE,
+  markup_percentage NUMERIC(8, 6) NOT NULL,
+  customer_rate_excl_vat NUMERIC(14, 6) NOT NULL,
+  customer_rate_incl_vat NUMERIC(14, 6) NOT NULL,
+  annual_revenue_excl_vat NUMERIC(16, 2) NOT NULL,
+  ebit_before_tax NUMERIC(16, 2) NOT NULL,
+  profit_after_tax NUMERIC(16, 2) NOT NULL,
+  after_tax_margin NUMERIC(12, 6) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id BIGSERIAL PRIMARY KEY,
+  actor TEXT,
+  action TEXT NOT NULL,
+  entity_type TEXT,
+  entity_id TEXT,
+  before_snapshot JSONB,
+  after_snapshot JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 INSERT INTO jurisdictions (code, name, currency, as_of, modelling_note) VALUES
   ('AT', 'Austria', 'EUR', '2026-05', 'Corporate rate used for GmbH/AG. Sole traders need separate validation.'),
   ('DE', 'Germany', 'EUR', '2026-05', 'Corporate tax includes solidarity surcharge on CIT. Trade tax is modelled as an average proxy.'),
@@ -126,6 +172,16 @@ ON CONFLICT (jurisdiction_code) DO UPDATE SET
   default_company_type = EXCLUDED.default_company_type,
   default_business_model = EXCLUDED.default_business_model,
   source_urls = EXCLUDED.source_urls;
+
+UPDATE tax_rules tr
+SET
+  source_name = COALESCE(tr.source_name, 'Seeded modelling defaults'),
+  source_as_of = COALESCE(tr.source_as_of, TO_DATE(j.as_of || '-01', 'YYYY-MM-DD')),
+  last_reviewed_at = COALESCE(tr.last_reviewed_at, TO_DATE(j.as_of || '-01', 'YYYY-MM-DD')),
+  valid_from = COALESCE(tr.valid_from, TO_DATE(j.as_of || '-01', 'YYYY-MM-DD')),
+  rule_status = COALESCE(tr.rule_status, 'indicative')
+FROM jurisdictions j
+WHERE j.code = tr.jurisdiction_code;
 
 INSERT INTO business_models (code, label) VALUES
   ('OWNER_OPERATOR', 'Owner-operator'),
@@ -209,6 +265,26 @@ INSERT INTO operating_profiles (code, name, short_name, default_inputs) VALUES
     "commercialAdminOverheadAnnualCost":0,
     "targetEbitMargin":0.1,
     "selectedMarkup":0.125
+  }'),
+  ('BLUEPRINT_DEFAULT', 'Blueprint calculation', 'Blueprint', '{
+    "dailyKm":450,
+    "operatingDaysPerYear":240,
+    "loadFactor":0.85,
+    "payloadCapacityTons":24,
+    "payloadUtilisation":0.9,
+    "fuelConsumptionLPer100Km":29,
+    "fuelPricePerLiter":1.55,
+    "tyresAnnualCost":4500,
+    "maintenanceAnnualCost":9500,
+    "roadFeesAnnualCost":18000,
+    "driverSalaryAnnual":36000,
+    "driverPerDiemDaily":35,
+    "ownershipOrLeasingAnnual":32000,
+    "insuranceAnnual":4800,
+    "vehicleTaxAnnual":1200,
+    "structuralIndirectCostsAnnual":15000,
+    "markupPercentage":0.15,
+    "targetAfterTaxMargin":0.1
   }')
 ON CONFLICT (code) DO UPDATE SET
   name = EXCLUDED.name,

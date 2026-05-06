@@ -11,6 +11,24 @@ import {
 } from "./referenceData.js";
 
 export {
+  CalculationValidationError,
+  blueprintFormulaDefinitions,
+  blueprintLoadFactors,
+  blueprintPayloadUtilisations,
+  blueprintPricingMarkups,
+  calculateBreakEven,
+  defaultBlueprintCalculationInput,
+  generatePricingScenarios,
+  generateSensitivity,
+  getBlueprintReferenceData,
+  getBusinessModels,
+  getCompanyTypesForCountry,
+  getCountries,
+  getTaxProfile,
+  getVehicleClasses
+} from "./blueprintEngine.js";
+
+export {
   businessModels,
   inputSections,
   operatingProfiles,

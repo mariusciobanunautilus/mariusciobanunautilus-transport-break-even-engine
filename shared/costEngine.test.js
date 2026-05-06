@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  calculateBreakEven,
   computeLongDistance40t,
   computeRegional40t,
   computeTransportEngine,
   computeVehicleClassSensitivity,
+  generatePricingScenarios,
+  generateSensitivity,
   taxRules
 } from "./costEngine.js";
 
@@ -78,6 +81,110 @@ test("engine refuses invalid percentage entry", () => {
     () => computeLongDistance40t({ loadedRatio: 85.3 }),
     /loadedRatio must be entered as a decimal ratio/
   );
+});
+
+test("blueprint calculation matches the baseline payload", () => {
+  const { result } = calculateBreakEven({
+    input: {
+      countryId: 1,
+      companyTypeId: 2,
+      businessModelId: 2,
+      numberOfTrucks: 1,
+      vehicleClassId: 7,
+      dailyKm: 450,
+      operatingDaysPerYear: 240,
+      loadFactor: 0.85,
+      payloadCapacityTons: 24,
+      payloadUtilisation: 0.9,
+      fuelConsumptionLPer100Km: 29,
+      fuelPricePerLiter: 1.55,
+      tyresAnnualCost: 4500,
+      maintenanceAnnualCost: 9500,
+      roadFeesAnnualCost: 18000,
+      driverSalaryAnnual: 36000,
+      driverPerDiemDaily: 35,
+      ownershipOrLeasingAnnual: 32000,
+      insuranceAnnual: 4800,
+      vehicleTaxAnnual: 1200,
+      structuralIndirectCostsAnnual: 15000,
+      markupPercentage: 0.15
+    },
+    taxProfile: {
+      vatRegistered: true,
+      vatRate: 0.2,
+      employerContributionRate: 0.21,
+      effectiveBusinessTaxRate: 0.23,
+      vehicleTaxDefaultAnnual: 1200
+    }
+  });
+
+  assertClose(result.annualTotalKm, 108000);
+  assertClose(result.loadedKmYear, 91800);
+  assertClose(result.effectivePayloadTons, 21.6);
+  assertClose(result.annualTonneKm, 1982880.0000000002);
+  assertClose(result.totalAnnualCost, 185506);
+  assertClose(result.breakEvenPerLoadedKm, 2.0207625272331153);
+  assertClose(result.breakEvenPerTonneKm, 0.09355382070523682);
+  assertClose(result.customerRateExclVat, 2.3238769063180826);
+  assertClose(result.customerRateInclVat, 2.7886522875816993);
+  assertClose(result.profitAfterTax, 21425.942999999996);
+  assertClose(result.afterTaxMargin, 0.10043478260869564);
+});
+
+test("blueprint VAT-disabled invoice layer keeps VAT out of revenue", () => {
+  const { result, taxProfile } = calculateBreakEven({
+    input: {
+      countryId: 1,
+      companyTypeId: 2,
+      businessModelId: 2,
+      vehicleClassId: 7,
+      vatRegistered: false
+    },
+    taxProfile: {
+      vatRegisteredDefault: true,
+      vatRate: 0.2,
+      employerContributionRate: 0.21,
+      effectiveBusinessTaxRate: 0.23,
+      vehicleTaxDefaultAnnual: 1200
+    }
+  });
+
+  assert.equal(taxProfile.vatRegistered, false);
+  assertClose(result.customerRateInclVat, result.customerRateExclVat);
+  assertClose(result.vatCollected, 0);
+});
+
+test("blueprint pricing and sensitivity previews produce expected matrices", () => {
+  const scenarios = generatePricingScenarios({
+    markups: [0, 0.15],
+    taxProfile: {
+      vatRegistered: true,
+      vatRate: 0.2,
+      employerContributionRate: 0.21,
+      effectiveBusinessTaxRate: 0.23,
+      vehicleTaxDefaultAnnual: 1200
+    }
+  });
+  const sensitivity = generateSensitivity({
+    markups: [0, 0.15],
+    payloadUtilisations: [0.5, 1],
+    loadFactors: [0.75, 0.9],
+    fuelPrices: [1.2, 1.8],
+    taxProfile: {
+      vatRegistered: true,
+      vatRate: 0.2,
+      employerContributionRate: 0.21,
+      effectiveBusinessTaxRate: 0.23,
+      vehicleTaxDefaultAnnual: 1200
+    }
+  });
+
+  assert.equal(scenarios.length, 2);
+  assert.equal(sensitivity.vehicleClassSensitivity.length, 9);
+  assert.equal(sensitivity.payloadUtilisationSensitivity.length, 2);
+  assert.equal(sensitivity.loadFactorSensitivity.length, 2);
+  assert.equal(sensitivity.markupSensitivity.length, 2);
+  assert.equal(sensitivity.fuelPriceSensitivity.length, 2);
 });
 
 function assertClose(actual, expected, tolerance = 1e-9) {
