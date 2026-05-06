@@ -54,7 +54,7 @@ const inputSections = [
       ["driverPerDiemDaily", "Per diem", "EUR/day"],
       ["ownershipOrLeasingAnnual", "Ownership or leasing", "EUR/year"],
       ["insuranceAnnual", "Insurance", "EUR/year"],
-      ["vehicleTaxAnnual", "Vehicle tax", "EUR/year"],
+      ["vehicleTaxAnnual", "Vehicle tax per vehicle", "EUR/year"],
       ["structuralIndirectCostsAnnual", "Structural costs", "EUR/year"]
     ]
   },
@@ -368,6 +368,27 @@ export default function App() {
     setStatus("Company type defaults applied");
   }
 
+  function applyVehicleTaxDefaultToFleet() {
+    const vehicleTaxAnnual = selectedTaxProfile?.vehicleTaxDefaultAnnual;
+    if (vehicleTaxAnnual == null || Number.isNaN(Number(vehicleTaxAnnual))) return;
+
+    setInput((current) => {
+      const nextGroups = getFleetGroups(current, reference.vehicleClasses).map((group) => ({
+        ...group,
+        vehicleTaxAnnual: Number(vehicleTaxAnnual)
+      }));
+
+      return syncInputWithFleetGroups(
+        {
+          ...current,
+          vehicleTaxAnnual: Number(vehicleTaxAnnual)
+        },
+        nextGroups
+      );
+    });
+    setStatus("Vehicle tax default applied to fleet");
+  }
+
   function updateVehicleGroup(index, field, value) {
     setInput((current) => {
       const groups = getFleetGroups(current, reference.vehicleClasses);
@@ -501,8 +522,10 @@ export default function App() {
 
         {activePage === "company" && (
           <CompanyTaxPage
+            applyVehicleTaxDefaultToFleet={applyVehicleTaxDefaultToFleet}
             businessModels={reference.businessModels}
             companyTypes={companyTypes}
+            fleetGroups={fleetGroups}
             input={input}
             selectedBusinessModel={selectedBusinessModel}
             selectedCompanyType={selectedCompanyType}
@@ -692,15 +715,22 @@ function DashboardPage({
 }
 
 function CompanyTaxPage({
+  applyVehicleTaxDefaultToFleet,
   businessModels,
   companyTypes,
   countries,
+  fleetGroups,
   input,
   selectedTaxProfile,
   updateCompanyType,
   updateCountry,
   updateInput
 }) {
+  const vehicleTaxStatus = getVehicleTaxStatus(
+    fleetGroups,
+    selectedTaxProfile?.vehicleTaxDefaultAnnual
+  );
+
   return (
     <div className="page-stack">
       <section className="form-grid">
@@ -753,6 +783,21 @@ function CompanyTaxPage({
             label="Vehicle tax default"
             value={money(selectedTaxProfile?.vehicleTaxDefaultAnnual, 0)}
           />
+          <Fact
+            label="Fleet vehicle tax input"
+            value={vehicleTaxStatus.label}
+          />
+          {!vehicleTaxStatus.matchesDefault && (
+            <div className="notice-panel">
+              <strong>Fleet uses a custom vehicle tax.</strong>
+              <p>
+                The default is a modelling starting point. Inputs can override it per vehicle group.
+              </p>
+              <button onClick={applyVehicleTaxDefaultToFleet} type="button">
+                Apply default to fleet
+              </button>
+            </div>
+          )}
           <Fact label="Source date" value={selectedTaxProfile?.sourceDate || "n/a"} />
           <p className="disclaimer">
             The tax profile is a modelling layer for business planning. It is not tax advice.
@@ -1407,6 +1452,33 @@ function shouldApplyFieldToVehicleGroups(field) {
     "markupPercentage",
     "targetAfterTaxMargin"
   ].includes(field);
+}
+
+function getVehicleTaxStatus(fleetGroups, defaultVehicleTaxAnnual) {
+  const defaultValue = Number(defaultVehicleTaxAnnual);
+  const values = fleetGroups
+    .map((group) => Number(group.vehicleTaxAnnual))
+    .filter((value) => Number.isFinite(value));
+  const uniqueValues = [...new Set(values.map((value) => Number(value.toFixed(2))))];
+
+  if (uniqueValues.length === 0) {
+    return {
+      label: "n/a",
+      matchesDefault: true
+    };
+  }
+
+  const matchesDefault =
+    Number.isFinite(defaultValue) &&
+    uniqueValues.every((value) => Math.abs(value - defaultValue) < 0.005);
+
+  return {
+    label:
+      uniqueValues.length === 1
+        ? money(uniqueValues[0])
+        : `Mixed: ${uniqueValues.map((value) => money(value)).join(", ")}`,
+    matchesDefault
+  };
 }
 
 function fleetModeLabel(mode, fleetGroups = []) {
