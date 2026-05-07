@@ -66,11 +66,18 @@ test("break-even result explains formulas as a calculation breakdown", async ({ 
   await expect(page.getByText("Advanced formula audit")).toBeVisible();
 });
 
-test("sensitivity page has interactive drag controls and charts", async ({ page }) => {
+test("sensitivity page stacks expandable sensitivity cards", async ({ page }) => {
   await page.goto("/#/sensitivity");
 
-  await expect(page.getByRole("heading", { name: "Fuel Price Drag Test" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Load Factor Drag Test" })).toBeVisible();
-  await expect(page.getByText("Nearest break-even").first()).toBeVisible();
-  await expect(page.locator(".sensitivity-bar").first()).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Hover a card to inspect the moving parts" })
+  ).toBeVisible();
+  await expect(page.locator(".hover-sensitivity-card")).toHaveCount(3);
+  await expect(page.getByRole("region", { name: "Vehicle Class Sensitivity" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Payload Utilisation" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Fuel Price" })).toBeVisible();
+
+  const fuelCard = page.getByRole("region", { name: "Fuel Price" });
+  await fuelCard.hover();
+  await expect(fuelCard.locator(".sensitivity-bar").first()).toBeVisible();
 });
