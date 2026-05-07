@@ -474,6 +474,307 @@ p {
   padding: 16px;
 }
 
+.dashboard-visual-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+.dashboard-visual-panel {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 16px;
+}
+
+.stacked-cost-bar {
+  display: flex;
+  overflow: hidden;
+  height: 20px;
+  border-radius: 999px;
+  background: #e6eaed;
+}
+
+.stacked-cost-bar span {
+  flex: 0 0 var(--segment-width);
+  min-width: 6px;
+  background: var(--segment-color);
+}
+
+.cost-legend,
+.period-comparison-list,
+.signal-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.cost-legend-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.cost-legend-row > span {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--legend-color);
+}
+
+.cost-legend-row strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 0.86rem;
+}
+
+.cost-legend-row small,
+.cost-legend-row em {
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.timeline-track {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.timeline-month {
+  display: grid;
+  min-width: 0;
+  min-height: 40px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-muted);
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.timeline-month.selected {
+  box-shadow: inset 0 0 0 2px rgba(23, 32, 42, 0.18);
+}
+
+.status-actual {
+  --status-color: #167761;
+  --status-bg: #e5f3ef;
+}
+
+.status-forecast {
+  --status-color: #2f6fb0;
+  --status-bg: #e8f1fb;
+}
+
+.status-planned {
+  --status-color: #d08a22;
+  --status-bg: #fff4de;
+}
+
+.status-snapshot {
+  --status-color: #607080;
+  --status-bg: #eef1f3;
+}
+
+.status-empty {
+  --status-color: #8b949e;
+  --status-bg: #f4f6f7;
+}
+
+.timeline-month.status-actual,
+.timeline-month.status-forecast,
+.timeline-month.status-planned,
+.timeline-month.status-snapshot {
+  border-color: color-mix(in srgb, var(--status-color) 42%, var(--line));
+  background: var(--status-bg);
+  color: var(--status-color);
+}
+
+.timeline-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.status-dot,
+.period-status {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  width: fit-content;
+  border: 1px solid color-mix(in srgb, var(--status-color) 36%, var(--line));
+  border-radius: 999px;
+  background: var(--status-bg);
+  color: var(--status-color);
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.status-dot::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--status-color);
+  content: "";
+}
+
+.visual-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.visual-actions button {
+  min-height: 34px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--text);
+  padding: 7px 10px;
+  font-weight: 800;
+}
+
+.period-comparison-row {
+  display: grid;
+  grid-template-columns: minmax(112px, 0.75fr) minmax(150px, 1.25fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-muted);
+  padding: 9px;
+}
+
+.period-comparison-label,
+.period-comparison-values {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.period-comparison-label strong,
+.period-comparison-values strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 0.86rem;
+}
+
+.period-comparison-values {
+  text-align: right;
+}
+
+.period-comparison-values span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 760;
+}
+
+.comparison-bars {
+  display: grid;
+  gap: 5px;
+}
+
+.comparison-bars span {
+  display: block;
+  width: var(--bar-width);
+  min-width: 3px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.loaded-km-bar {
+  background: #167761;
+}
+
+.cost-bar {
+  background: #c98632;
+}
+
+.signal-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.signal-tile {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-muted);
+  padding: 10px;
+}
+
+.signal-tile span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 830;
+}
+
+.signal-tile strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.signal-tile.tone-good {
+  border-color: rgba(22, 119, 97, 0.36);
+  background: var(--accent-soft);
+}
+
+.signal-tile.tone-warning {
+  border-color: #efd7a9;
+  background: var(--warning-soft);
+}
+
+.signal-tile.tone-danger {
+  border-color: rgba(161, 58, 50, 0.28);
+  background: #fff0ef;
+}
+
+.signal-warnings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.signal-warnings span,
+.empty-visual span {
+  border: 1px solid #efd7a9;
+  border-radius: 999px;
+  background: var(--warning-soft);
+  color: #815000;
+  padding: 5px 9px;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.signal-warnings.clear span {
+  border-color: rgba(22, 119, 97, 0.28);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.empty-visual {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  min-height: 84px;
+  align-content: center;
+}
+
 .panel-heading {
   display: flex;
   gap: 12px;
@@ -1622,6 +1923,7 @@ th {
   .equation-grid,
   .advanced-formula-grid,
   .hover-sensitivity-summary,
+  .dashboard-visual-grid,
   .dashboard-layout,
   .two-column,
   .form-grid,
@@ -1642,8 +1944,17 @@ th {
   .formula-flow,
   .comparison-grid,
   .period-cost-grid,
-  .mode-facts {
+  .mode-facts,
+  .signal-grid {
     grid-template-columns: 1fr;
+  }
+
+  .period-comparison-row {
+    grid-template-columns: 1fr;
+  }
+
+  .period-comparison-values {
+    text-align: left;
   }
 
 }
@@ -1662,6 +1973,10 @@ th {
   .sensitivity-facts,
   .compact-fields {
     grid-template-columns: 1fr;
+  }
+
+  .timeline-track {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .workspace-header,
