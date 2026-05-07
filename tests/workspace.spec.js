@@ -56,6 +56,16 @@ test("pricing slider updates the selected markup and scenarios can be pinned", a
   await expect(page.getByRole("button", { name: "Pinned" }).first()).toBeVisible();
 });
 
+test("break-even result explains formulas as a calculation breakdown", async ({ page }) => {
+  await page.goto("/#/results");
+
+  await expect(page.getByRole("heading", { name: "How the break-even is built" })).toBeVisible();
+  await expect(page.getByText("Activity").first()).toBeVisible();
+  await expect(page.getByText("Total annual cost").first()).toBeVisible();
+  await expect(page.getByText("Customer rate excl. VAT")).toBeVisible();
+  await expect(page.getByText("Advanced formula audit")).toBeVisible();
+});
+
 test("sensitivity page has interactive drag controls and charts", async ({ page }) => {
   await page.goto("/#/sensitivity");
 

@@ -1143,17 +1143,7 @@ function BreakEvenResultsPage({ calculation }) {
         </Card>
       )}
 
-      <Card title="Formula Audit">
-        <div className="formula-list">
-          {calculation.formulas.map((formula) => (
-            <details key={formula.field}>
-              <summary>{formula.field}</summary>
-              <p>{formula.formula}</p>
-              <small>{formula.rounding}</small>
-            </details>
-          ))}
-        </div>
-      </Card>
+      <CalculationBreakdown calculation={calculation} result={result} />
     </div>
   );
 }
@@ -1569,6 +1559,151 @@ function RunComparison({ runs }) {
         </article>
       ))}
     </div>
+  );
+}
+
+function CalculationBreakdown({ calculation, result }) {
+  const loadedShare = safeRatio(result.loadedKmYear, result.annualTotalKm);
+  const markup = safeRatio(result.customerRateExclVat, result.breakEvenPerLoadedKm) - 1;
+  const revenueBeforeTax = result.annualRevenueExclVat - result.totalAnnualCost;
+  const groupCount = result.vehicleGroupResults?.length || 0;
+
+  const steps = [
+    {
+      category: "Activity",
+      detail: "Start with how much the fleet works and how much of that distance is loaded.",
+      equation: `${format(result.annualTotalKm)} total km x ${percent(loadedShare)} loaded = ${format(result.loadedKmYear)} loaded km`,
+      label: "Loaded kilometres",
+      result: `${format(result.loadedKmYear)} km/year`
+    },
+    {
+      category: "Cost",
+      detail: "Add operating, driver, vehicle and structural costs into one annual cost base.",
+      equation: `${money(result.variableAnnualCost)} + ${money(result.driverAnnualCost)} + ${money(result.vehicleFixedAnnualCost)} + ${money(result.structuralIndirectCostsAnnual)} = ${money(result.totalAnnualCost)}`,
+      label: "Total annual cost",
+      result: money(result.totalAnnualCost)
+    },
+    {
+      category: "Break-even",
+      detail: "Divide the annual cost by loaded kilometres to get the minimum rate before margin.",
+      equation: `${money(result.totalAnnualCost)} / ${format(result.loadedKmYear)} loaded km = ${money(result.breakEvenPerLoadedKm)}/km`,
+      label: "Break-even loaded km",
+      result: money(result.breakEvenPerLoadedKm)
+    },
+    {
+      category: "Payload",
+      detail: "Tonne-km shows the same cost spread over transported payload, not just distance.",
+      equation: `${money(result.totalAnnualCost)} / ${format(result.annualTonneKm)} tonne-km = ${money(result.breakEvenPerTonneKm)}/t-km`,
+      label: "Break-even tonne-km",
+      result: money(result.breakEvenPerTonneKm)
+    },
+    {
+      category: "Pricing",
+      detail: "Apply the selected markup to the break-even rate to reach the customer rate.",
+      equation: `${money(result.breakEvenPerLoadedKm)} x (1 + ${percent(markup)}) = ${money(result.customerRateExclVat)}`,
+      label: "Customer rate excl. VAT",
+      result: money(result.customerRateExclVat)
+    },
+    {
+      category: "Profit",
+      detail: "Revenue above cost becomes EBIT, then business tax is deducted from positive EBIT.",
+      equation: `${money(result.annualRevenueExclVat)} - ${money(result.totalAnnualCost)} = ${money(revenueBeforeTax)} EBIT; after tax = ${money(result.profitAfterTax)}`,
+      label: "Profit after tax",
+      result: money(result.profitAfterTax)
+    }
+  ];
+
+  return (
+    <section className="calculation-breakdown">
+      <div className="calculation-breakdown-header">
+        <div>
+          <p className="eyebrow">Calculation breakdown</p>
+          <h2>How the break-even is built</h2>
+          <p>
+            Follow the result from fleet activity to cost, break-even, pricing and profit. The technical formula audit is still available below for checking the engine details.
+          </p>
+        </div>
+        <div className="breakdown-hero-number">
+          <span>Global break-even</span>
+          <strong>{money(result.breakEvenPerLoadedKm)}</strong>
+          <small>{currencyCode()}/loaded km</small>
+        </div>
+      </div>
+
+      <div className="formula-flow" aria-label="Break-even calculation flow">
+        {["Activity", "Cost", "Break-even", "Pricing", "Profit"].map((item) => (
+          <span key={item}>{item}</span>
+        ))}
+      </div>
+
+      <div className="equation-grid">
+        {steps.map((step) => (
+          <FormulaStepCard key={step.category} step={step} />
+        ))}
+      </div>
+
+      {groupCount > 1 && (
+        <div className="fleet-aggregation-note">
+          <strong>Fleet aggregation</strong>
+          <span>
+            {formatCount(groupCount)} groups are calculated separately first. The global break-even then uses total fleet cost divided by total loaded kilometres.
+          </span>
+        </div>
+      )}
+
+      <AdvancedFormulaAudit formulas={calculation.formulas || []} />
+    </section>
+  );
+}
+
+function FormulaStepCard({ step }) {
+  return (
+    <article className="formula-step-card">
+      <div>
+        <span>{step.category}</span>
+        <h3>{step.label}</h3>
+      </div>
+      <strong>{step.result}</strong>
+      <p>{step.detail}</p>
+      <code>{step.equation}</code>
+    </article>
+  );
+}
+
+function AdvancedFormulaAudit({ formulas }) {
+  if (formulas.length === 0) return null;
+  const grouped = formulas.reduce((groups, formula) => {
+    const category = formulaCategory(formula.field);
+    groups[category] = [...(groups[category] || []), formula];
+    return groups;
+  }, {});
+
+  return (
+    <details className="advanced-formula-audit">
+      <summary>
+        <span>Advanced formula audit</span>
+        <strong>{formatCount(formulas.length)} formulas</strong>
+      </summary>
+      <div className="advanced-formula-grid">
+        {Object.entries(grouped).map(([category, categoryFormulas]) => (
+          <section key={category}>
+            <h3>{category}</h3>
+            <div className="formula-list">
+              {categoryFormulas.map((formula) => (
+                <details key={formula.field}>
+                  <summary>
+                    {friendlyFormulaLabel(formula.field)}
+                    <code>{formula.field}</code>
+                  </summary>
+                  <p>{humanizeFormula(formula.formula)}</p>
+                  <small>{formula.rounding}</small>
+                </details>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -2294,4 +2429,60 @@ function slugify(value) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 80);
+}
+
+function friendlyFormulaLabel(field) {
+  const labels = {
+    annualPerDiem: "Annual per diem",
+    annualRevenueExclVat: "Annual revenue excluding VAT",
+    annualTonneKm: "Annual tonne-km",
+    annualTotalKm: "Annual total kilometres",
+    breakEvenPerLoadedKm: "Break-even per loaded km",
+    breakEvenPerTonneKm: "Break-even per tonne-km",
+    businessTax: "Business tax",
+    customerRateExclVat: "Customer rate excluding VAT",
+    customerRateInclVat: "Customer rate including VAT",
+    dailyKm: "Daily kilometres",
+    driverAnnualCost: "Driver annual cost",
+    effectivePayloadTons: "Effective payload",
+    ebitBeforeTax: "EBIT before tax",
+    employerContributionAnnual: "Employer contribution",
+    fleetBreakEvenPerLoadedKm: "Fleet break-even per loaded km",
+    fleetLoadedKmYear: "Fleet loaded kilometres",
+    fleetTotalAnnualCost: "Fleet total annual cost",
+    fuelCostPerKm: "Fuel cost per km",
+    fuelConsumptionLPer100Km: "Fuel consumption",
+    fuelPricePerLiter: "Fuel price",
+    invoiceValueInclVat: "Invoice value including VAT",
+    loadFactor: "Loaded km share",
+    loadedKmYear: "Loaded kilometres per year",
+    markupPercentage: "Markup",
+    operatingDaysPerYear: "Operating days",
+    payloadCapacityTons: "Payload capacity",
+    payloadUtilisation: "Payload utilisation",
+    profitAfterTax: "Profit after tax",
+    totalAnnualCost: "Total annual cost",
+    variableCostPerKm: "Variable cost per km",
+    vatRate: "VAT rate",
+    vatCollected: "VAT collected",
+    vehicleFixedAnnualCost: "Vehicle fixed annual cost"
+  };
+  return labels[field] || field.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function formulaCategory(field) {
+  if (/fleet/i.test(field)) return "Fleet";
+  if (/annualTotalKm|loadedKm|payload|tonne/i.test(field)) return "Activity";
+  if (/fuel|variable|driver|vehicleFixed|perDiem|employer|totalAnnualCost/i.test(field)) return "Cost";
+  if (/breakEven/i.test(field)) return "Break-even";
+  if (/customerRate|revenue|invoice|vat/i.test(field)) return "Pricing";
+  if (/tax|profit/i.test(field)) return "Tax & profit";
+  return "Other";
+}
+
+function humanizeFormula(formula) {
+  if (!formula) return "n/a";
+  return formula
+    .replaceAll(" x ", " * ")
+    .replace(/\b([a-z][a-zA-Z0-9]*)\b/g, (match) => friendlyFormulaLabel(match));
 }

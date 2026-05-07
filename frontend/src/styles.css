@@ -865,6 +865,211 @@ p {
   padding-top: 12px;
 }
 
+.calculation-breakdown {
+  display: grid;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 16px;
+}
+
+.calculation-breakdown-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(210px, 0.32fr);
+  gap: 18px;
+  align-items: center;
+}
+
+.calculation-breakdown-header h2 {
+  margin: 4px 0 8px;
+  color: var(--text);
+  font-size: 1.22rem;
+}
+
+.calculation-breakdown-header p {
+  max-width: 850px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
+.breakdown-hero-number {
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(22, 119, 97, 0.22);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  padding: 14px;
+}
+
+.breakdown-hero-number span,
+.breakdown-hero-number small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 820;
+}
+
+.breakdown-hero-number strong {
+  color: var(--accent-strong);
+  font-size: 1.65rem;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+
+.formula-flow {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.formula-flow span {
+  position: relative;
+  display: grid;
+  min-height: 36px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-muted);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.formula-flow span:not(:last-child)::after {
+  position: absolute;
+  right: -11px;
+  color: var(--muted);
+  content: ">";
+  font-size: 0.86rem;
+}
+
+.equation-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.formula-step-card {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-muted);
+  padding: 14px;
+}
+
+.formula-step-card > div {
+  display: grid;
+  gap: 3px;
+}
+
+.formula-step-card span {
+  color: var(--accent-strong);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.formula-step-card h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.98rem;
+}
+
+.formula-step-card > strong {
+  color: var(--text);
+  font-size: 1.25rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.formula-step-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.formula-step-card code {
+  display: block;
+  overflow-wrap: anywhere;
+  border: 1px solid #e3e8ec;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #304253;
+  padding: 9px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.fleet-aggregation-note {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 12px;
+}
+
+.fleet-aggregation-note strong {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.fleet-aggregation-note span {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.advanced-formula-audit {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.advanced-formula-audit > summary {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  padding: 12px 14px;
+}
+
+.advanced-formula-audit > summary span {
+  color: var(--text);
+  font-weight: 850;
+}
+
+.advanced-formula-audit > summary strong {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-muted);
+  color: var(--muted);
+  padding: 4px 8px;
+  font-size: 0.76rem;
+}
+
+.advanced-formula-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding: 14px;
+}
+
+.advanced-formula-grid h3 {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
 .formula-list {
   display: grid;
   gap: 8px;
@@ -878,9 +1083,19 @@ p {
 }
 
 .formula-list summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
   cursor: pointer;
   color: var(--text);
   font-weight: 800;
+}
+
+.formula-list summary code {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
 }
 
 .formula-list p {
@@ -1133,6 +1348,9 @@ th {
   .summary-grid,
   .dashboard-hero,
   .first-run-panel,
+  .calculation-breakdown-header,
+  .equation-grid,
+  .advanced-formula-grid,
   .dashboard-layout,
   .two-column,
   .form-grid,
@@ -1146,6 +1364,7 @@ th {
   }
 
   .first-run-steps,
+  .formula-flow,
   .comparison-grid {
     grid-template-columns: 1fr;
   }
@@ -1179,6 +1398,17 @@ th {
 
   .stale-banner {
     align-items: stretch;
+    flex-direction: column;
+  }
+
+  .formula-flow span:not(:last-child)::after {
+    right: auto;
+    bottom: -14px;
+    transform: rotate(90deg);
+  }
+
+  .fleet-aggregation-note {
+    align-items: flex-start;
     flex-direction: column;
   }
 
