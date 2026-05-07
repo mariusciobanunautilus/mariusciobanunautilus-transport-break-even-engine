@@ -75,9 +75,44 @@ const vehicleGroupFields = vehicleInputSections.flatMap((section) =>
   section.fields.map(([field]) => field)
 );
 
+const localeByCountryCode = {
+  AT: "de-AT",
+  BG: "bg-BG",
+  CZ: "cs-CZ",
+  DE: "de-DE",
+  HU: "hu-HU",
+  MANUAL: "en-GB",
+  RO: "ro-RO",
+  SK: "sk-SK"
+};
+
+let activeFormatContext = {
+  currency: "EUR",
+  locale: "en-US"
+};
+
+const metricHelp = {
+  "Annual cost": "Total yearly cost for the selected fleet or vehicle group.",
+  "Annual total km": "All kilometres driven in a year, loaded and empty.",
+  "Average payload": "Weighted effective payload after applying payload utilisation.",
+  "Break-even": "The minimum customer rate needed to cover annual cost before markup.",
+  "Break-even loaded km": "Annual cost divided by loaded kilometres.",
+  "Break-even tonne-km": "Annual cost divided by transported tonne-kilometres.",
+  "Customer rate": "The rate charged to the customer after markup, excluding VAT.",
+  "EBIT before tax": "Profit before business tax.",
+  "Global annual cost": "Total yearly cost across all vehicle groups.",
+  "Global break-even": "Fleet-wide break-even per loaded kilometre.",
+  "Global tonne-km": "Fleet-wide break-even per transported tonne-kilometre.",
+  "Loaded km": "Kilometres driven with payable freight.",
+  "Loaded km/year": "Annual loaded kilometres across the fleet.",
+  "Profit after tax": "Profit after applying the selected business tax profile.",
+  "Tonne-km/year": "Loaded kilometres multiplied by effective payload.",
+  VAT: "Value-added tax applied to customer invoices when VAT registered."
+};
+
 export default function App() {
   const [reference, setReference] = useState(fallbackReference);
-  const [activePage, setActivePage] = useState("dashboard");
+  const [activePage, setActivePage] = useState(() => pageFromHash());
   const [input, setInput] = useState(defaultBlueprintCalculationInput);
   const [runName, setRunName] = useState("Baseline pricing run");
   const [calculation, setCalculation] = useState(null);
@@ -86,6 +121,10 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [exportPack, setExportPack] = useState(null);
   const [status, setStatus] = useState("Ready");
+  const [isCalculating, setIsCalculating] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveNotice, setSaveNotice] = useState("");
+  const [undoStack, setUndoStack] = useState([]);
 
   const selectedCountry = useMemo(
     () => reference.countries.find((country) => country.id === input.countryId),
@@ -158,6 +197,18 @@ export default function App() {
     previewCalculation({ silent: true });
   }, []);
 
+  useEffect(() => {
+    const handleHashChange = () => setActivePage(pageFromHash());
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
+
+  useEffect(() => {
+    if (!saveNotice) return undefined;
+    const timer = window.setTimeout(() => setSaveNotice(""), 4500);
+    return () => window.clearTimeout(timer);
+  }, [saveNotice]);
+
   const previewIsStale = calculation
     ? JSON.stringify(calculation.input) !==
       JSON.stringify(normalizedInput)
@@ -171,6 +222,17 @@ export default function App() {
   const displaySensitivity = previewIsStale
     ? draftSensitivity
     : sensitivity;
+  const activePageLabel = pages.find(([key]) => key === activePage)?.[1] || "Dashboard";
+  const currentCountry = selectedCountry || reference.countries[0];
+  setActiveFormatContext(currentCountry);
+
+  function selectPage(page) {
+    const nextPage = pages.some(([key]) => key === page) ? page : "dashboard";
+    setActivePage(nextPage);
+    if (window.location.hash !== `#/${nextPage}`) {
+      window.history.replaceState(null, "", `#/${nextPage}`);
+    }
+  }
 
   async function loadReferenceData() {
     try {
@@ -199,6 +261,8 @@ export default function App() {
 
   async function previewCalculation(options = {}) {
     const payload = buildPayload();
+    setIsCalculating(true);
+    if (!options.silent) setStatus("Calculating");
 
     try {
       const [nextCalculation, nextPricing, nextSensitivity] = await Promise.all([
@@ -218,7 +282,7 @@ export default function App() {
       setCalculation(nextCalculation);
       setPricingScenarios(nextPricing);
       setSensitivity(nextSensitivity);
-      if (!options.silent) setStatus("Preview updated from backend");
+      if (!options.silent) setStatus("Calculated");
     } catch (error) {
       const nextCalculation = calculateBreakEven(payload);
       setCalculation(nextCalculation);
@@ -229,22 +293,31 @@ export default function App() {
           ? "Using local preview until backend is running"
           : `Backend unavailable: ${error.message}. Showing local preview.`
       );
+    } finally {
+      setIsCalculating(false);
     }
   }
 
   async function saveRun() {
     const payload = buildPayload();
+    setIsSaving(true);
 
     try {
       const response = await apiRequest("/api/calculations", {
         method: "POST",
         body: payload
       });
-      setStatus(`Saved run ${response.calculationRunId}`);
+      setCalculation(calculateBreakEven(payload));
+      setPricingScenarios(generatePricingScenarios(payload));
+      setSensitivity(generateSensitivity(payload));
+      setStatus("Saved");
+      setSaveNotice(`Saved "${response.savedRun?.runName || runName}" to History`);
       await loadHistory();
-      setActivePage("history");
+      selectPage("history");
     } catch (error) {
       setStatus(`Save needs backend: ${error.message}`);
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -279,7 +352,7 @@ export default function App() {
         formulas: openedCalculation.formulas
       });
       setPricingScenarios(run.pricingScenarios || []);
-      setActivePage("results");
+      selectPage("results");
       setStatus(`Opened ${run.runName}`);
     } catch (error) {
       setStatus(`Open failed: ${error.message}`);
@@ -299,13 +372,52 @@ export default function App() {
   function duplicateRun(run) {
     setInput(normalizedPreviewInput(run.inputSnapshot || input, reference.vehicleClasses));
     setRunName(`${run.runName || "Run"} copy`);
-    setActivePage("inputs");
+    selectPage("inputs");
     setStatus("Run duplicated locally. Calculate and save when ready.");
+  }
+
+  function exportCurrentCsv() {
+    if (!displayCalculation?.result) return;
+    const csv = buildCurrentScenarioCsv(runName, displayCalculation.result);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${slugify(runName || "pricing-run")}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setSaveNotice("CSV export prepared");
+  }
+
+  function printCurrentScenario() {
+    window.print();
+  }
+
+  function rememberInputSnapshot() {
+    setUndoStack((stack) => [input, ...stack].slice(0, 10));
+  }
+
+  function undoLastInputChange() {
+    setUndoStack((stack) => {
+      const [previous, ...rest] = stack;
+      if (previous) {
+        setInput(previous);
+        setStatus("Last input change undone");
+      }
+      return rest;
+    });
+  }
+
+  function resetInputsToDefaults() {
+    rememberInputSnapshot();
+    setInput(defaultBlueprintCalculationInput);
+    setStatus("Defaults restored");
   }
 
   function updateInput(field, value) {
     const normalized = value === "" ? "" : Number(value);
     if (value !== "" && !Number.isFinite(normalized)) return;
+    rememberInputSnapshot();
     setInput((current) => ({
       ...current,
       [field]: normalized,
@@ -332,6 +444,7 @@ export default function App() {
           profile.companyTypeId === nextCompanyType.id
       ) || selectedTaxProfile;
 
+    rememberInputSnapshot();
     setInput((current) => ({
       ...current,
       countryId: nextCountryId,
@@ -351,6 +464,7 @@ export default function App() {
           profile.companyTypeId === nextCompanyTypeId
       ) || selectedTaxProfile;
 
+    rememberInputSnapshot();
     setInput((current) => ({
       ...current,
       companyTypeId: nextCompanyTypeId,
@@ -361,6 +475,7 @@ export default function App() {
   }
 
   function updateVehicleGroup(index, field, value) {
+    rememberInputSnapshot();
     setInput((current) => {
       const groups = getFleetGroups(current, reference.vehicleClasses);
       const nextGroups = groups.map((group, groupIndex) => {
@@ -406,6 +521,7 @@ export default function App() {
   }
 
   function addVehicleGroup() {
+    rememberInputSnapshot();
     setInput((current) => {
       const groups = getFleetGroups(current, reference.vehicleClasses);
       const sourceGroup = groups[groups.length - 1] || getFleetGroups(current, reference.vehicleClasses)[0];
@@ -421,6 +537,7 @@ export default function App() {
   }
 
   function removeVehicleGroup(index) {
+    rememberInputSnapshot();
     setInput((current) => {
       const groups = getFleetGroups(current, reference.vehicleClasses);
       if (groups.length <= 1) return current;
@@ -444,41 +561,57 @@ export default function App() {
             <button
               className={activePage === key ? "active" : ""}
               key={key}
-              onClick={() => setActivePage(key)}
+              onClick={() => selectPage(key)}
               type="button"
             >
               {label}
             </button>
           ))}
         </nav>
-        <div className="sidebar-actions">
-          <button className="primary-button" onClick={() => previewCalculation()} type="button">
-            Calculate
-          </button>
-          <button className="secondary-button" onClick={saveRun} type="button">
-            Save Run
-          </button>
-        </div>
       </aside>
 
       <section className="workspace">
         <header className="workspace-header">
-          <div>
+          <div className="breadcrumb-bar">
+            <span>Pricing Workspace</span>
+            <strong>{activePageLabel}</strong>
+          </div>
+          <div className="run-strip">
             <label className="run-name">
-              <span>Run name</span>
+              <span>Run</span>
               <input
                 onChange={(event) => setRunName(event.target.value)}
                 value={runName}
               />
             </label>
+            <StatusPill stale={previewIsStale} status={status} />
+            <button
+              className="primary-button"
+              disabled={isCalculating}
+              onClick={() => previewCalculation()}
+              type="button"
+            >
+              {isCalculating ? "Calculating..." : previewIsStale ? "Recalculate" : "Calculate"}
+            </button>
+            <button className="secondary-button" disabled={isSaving} onClick={saveRun} type="button">
+              {isSaving ? "Saving..." : "Save Run"}
+            </button>
           </div>
-          <StatusPill stale={previewIsStale} status={status} />
         </header>
+
+        {previewIsStale && (
+          <StaleBanner isCalculating={isCalculating} onCalculate={() => previewCalculation()} />
+        )}
+
+        {saveNotice && <Toast message={saveNotice} />}
 
         {activePage === "dashboard" && (
           <DashboardPage
             fleetGroups={fleetGroups}
+            historyCount={history.length}
             input={input}
+            onExportCsv={exportCurrentCsv}
+            onPrintPdf={printCurrentScenario}
             previewIsStale={previewIsStale}
             pricingScenarios={displayPricingScenarios}
             result={result}
@@ -486,7 +619,7 @@ export default function App() {
             selectedCompanyType={selectedCompanyType}
             selectedCountry={selectedCountry}
             selectedTaxProfile={selectedTaxProfile}
-            setActivePage={setActivePage}
+            setActivePage={selectPage}
             vatRegistered={Boolean(input.vatRegistered)}
           />
         )}
@@ -513,8 +646,14 @@ export default function App() {
             addVehicleGroup={addVehicleGroup}
             fleetGroups={fleetGroups}
             input={input}
+            canUndo={undoStack.length > 0}
+            isCalculating={isCalculating}
+            onCalculate={() => previewCalculation()}
+            previewIsStale={previewIsStale}
             removeVehicleGroup={removeVehicleGroup}
             result={result}
+            resetInputsToDefaults={resetInputsToDefaults}
+            undoLastInputChange={undoLastInputChange}
             updateVehicleGroup={updateVehicleGroup}
             updateInput={updateInput}
             vehicles={reference.vehicleClasses}
@@ -559,6 +698,9 @@ export default function App() {
 
 function DashboardPage({
   fleetGroups,
+  historyCount,
+  onExportCsv,
+  onPrintPdf,
   previewIsStale,
   pricingScenarios,
   result,
@@ -592,13 +734,28 @@ function DashboardPage({
           <button onClick={() => setActivePage("results")} type="button">
             Break-even
           </button>
+          <button onClick={onExportCsv} type="button">
+            Export CSV
+          </button>
+          <button onClick={onPrintPdf} type="button">
+            Print PDF
+          </button>
         </div>
       </section>
 
+      {historyCount === 0 && (
+        <FirstRunGuide
+          breakEven={money(result?.breakEvenPerLoadedKm)}
+          onCompany={() => setActivePage("company")}
+          onInputs={() => setActivePage("inputs")}
+          onPricing={() => setActivePage("pricing")}
+        />
+      )}
+
       <section className="summary-grid">
-        <Kpi label="Global annual cost" value={money(result?.totalAnnualCost)} unit="EUR/year" />
-        <Kpi label="Global break-even" value={money(result?.breakEvenPerLoadedKm)} unit="EUR/loaded km" />
-        <Kpi label="Global tonne-km" value={money(result?.breakEvenPerTonneKm)} unit="EUR/t-km" />
+        <Kpi label="Global annual cost" value={money(result?.totalAnnualCost)} unit={currencyUnit("year")} />
+        <Kpi label="Global break-even" value={money(result?.breakEvenPerLoadedKm)} unit={`${currencyCode()}/loaded km`} />
+        <Kpi label="Global tonne-km" value={money(result?.breakEvenPerTonneKm)} unit={`${currencyCode()}/t-km`} />
         <Kpi label="After tax profit" value={money(result?.profitAfterTax)} unit={percent(result?.afterTaxMargin)} />
       </section>
 
@@ -708,7 +865,7 @@ function CompanyTaxPage({
             onChange={updateCompanyType}
             options={companyTypes.map((companyType) => [
               companyType.id,
-              companyType.name
+              friendlyCompanyTypeName(companyType.name)
             ])}
             value={input.companyTypeId}
           />
@@ -741,7 +898,7 @@ function CompanyTaxPage({
             label="Employer contribution"
             value={percent(selectedTaxProfile?.employerContributionRate)}
           />
-          <Fact label="Source date" value={selectedTaxProfile?.sourceDate || "n/a"} />
+          <Fact label="Source date" value={formatMonth(selectedTaxProfile?.sourceDate)} />
           <p className="disclaimer">
             The tax profile is a modelling layer for business planning. It is not tax advice.
           </p>
@@ -753,16 +910,62 @@ function CompanyTaxPage({
 
 function TransportInputsPage({
   addVehicleGroup,
+  canUndo,
   fleetGroups,
   input,
+  isCalculating,
+  onCalculate,
+  previewIsStale,
   removeVehicleGroup,
   result,
+  resetInputsToDefaults,
+  undoLastInputChange,
   updateInput,
   updateVehicleGroup,
   vehicles
 }) {
+  const [activeSection, setActiveSection] = useState(vehicleInputSections[0].title);
+  const activeVehicleSection =
+    vehicleInputSections.find((section) => section.title === activeSection) ||
+    vehicleInputSections[0];
+
   return (
     <div className="page-stack">
+      <section className="input-command-bar">
+        <div>
+          <p className="eyebrow">Inputs</p>
+          <h2>{activeVehicleSection.title}</h2>
+        </div>
+        <div className="input-section-nav" aria-label="Input sections">
+          {vehicleInputSections.map((section) => (
+            <button
+              className={section.title === activeVehicleSection.title ? "active" : ""}
+              key={section.title}
+              onClick={() => setActiveSection(section.title)}
+              type="button"
+            >
+              {shortSectionLabel(section.title)}
+            </button>
+          ))}
+        </div>
+        <div className="input-actions">
+          <button disabled={!canUndo} onClick={undoLastInputChange} type="button">
+            Undo
+          </button>
+          <button onClick={resetInputsToDefaults} type="button">
+            Reset defaults
+          </button>
+          <button
+            className="primary-button"
+            disabled={!previewIsStale || isCalculating}
+            onClick={onCalculate}
+            type="button"
+          >
+            {isCalculating ? "Calculating..." : "Recalculate"}
+          </button>
+        </div>
+      </section>
+
       <section className="form-grid">
         <Card title="Fleet Strategy">
           <Fact label="Scenario" value={fleetModeLabel(result?.fleetMode, fleetGroups)} />
@@ -826,25 +1029,24 @@ function TransportInputsPage({
               <Fact label="Group break-even" value={money(groupResult?.groupTotals?.breakEvenPerLoadedKm)} />
             </div>
 
-            {vehicleInputSections.map((section) => (
-              <div className="subsection" key={`${group.id}-${section.title}`}>
-                <h3>{section.title}</h3>
-                <div className="field-grid">
-                  {section.fields.map(([field, label, unit]) => (
-                    <NumberField
-                      field={field}
-                      key={field}
-                      label={label}
-                      onChange={(fieldName, value) =>
-                        updateVehicleGroup(index, fieldName, value)
-                      }
-                      unit={unit}
-                      value={group[field]}
-                    />
-                  ))}
-                </div>
+            <div className="subsection" key={`${group.id}-${activeVehicleSection.title}`}>
+              <h3>{activeVehicleSection.title}</h3>
+              <div className="field-grid">
+                {activeVehicleSection.fields.map(([field, label, unit]) => (
+                  <NumberField
+                    error={fieldValidationMessage(field, group[field])}
+                    field={field}
+                    key={field}
+                    label={label}
+                    onChange={(fieldName, value) =>
+                      updateVehicleGroup(index, fieldName, value)
+                    }
+                    unit={unit}
+                    value={group[field]}
+                  />
+                ))}
               </div>
-            ))}
+            </div>
 
             {fleetGroups.length > 1 && (
               <button
@@ -865,6 +1067,7 @@ function TransportInputsPage({
             .find((section) => section.title === "Pricing")
             .fields.map(([field, label, unit]) => (
               <NumberField
+                error={fieldValidationMessage(field, input[field])}
                 field={field}
                 key={field}
                 label={label}
@@ -887,17 +1090,17 @@ function BreakEvenResultsPage({ calculation }) {
   return (
     <div className="page-stack">
       <section className="summary-grid">
-        <Kpi label="Total annual cost" value={money(result.totalAnnualCost, 0)} unit="EUR/year" />
-        <Kpi label="Break-even loaded km" value={money(result.breakEvenPerLoadedKm, 4)} unit="EUR/km" />
-        <Kpi label="Break-even tonne-km" value={money(result.breakEvenPerTonneKm, 4)} unit="EUR/t-km" />
-        <Kpi label="EBIT before tax" value={money(result.ebitBeforeTax, 0)} unit="EUR/year" />
+        <Kpi label="Total annual cost" value={money(result.totalAnnualCost)} unit={currencyUnit("year")} />
+        <Kpi label="Break-even loaded km" value={money(result.breakEvenPerLoadedKm)} unit={`${currencyCode()}/km`} />
+        <Kpi label="Break-even tonne-km" value={money(result.breakEvenPerTonneKm)} unit={`${currencyCode()}/t-km`} />
+        <Kpi label="EBIT before tax" value={money(result.ebitBeforeTax)} unit={currencyUnit("year")} />
       </section>
 
       <section className="two-column">
         <Card title="Cost Breakdown">
-          <Fact label="Variable annual cost" value={money(result.variableAnnualCost, 0)} />
-          <Fact label="Driver annual cost" value={money(result.driverAnnualCost, 0)} />
-          <Fact label="Vehicle fixed cost" value={money(result.vehicleFixedAnnualCost, 0)} />
+          <Fact label="Variable annual cost" value={money(result.variableAnnualCost)} />
+          <Fact label="Driver annual cost" value={money(result.driverAnnualCost)} />
+          <Fact label="Vehicle fixed cost" value={money(result.vehicleFixedAnnualCost)} />
           <Fact
             label="Structural indirect cost"
             value={money(result.structuralIndirectCostsAnnual)}
@@ -905,10 +1108,10 @@ function BreakEvenResultsPage({ calculation }) {
         </Card>
 
         <Card title="Tax And Profit">
-          <Fact label="Annual revenue excl. VAT" value={money(result.annualRevenueExclVat, 0)} />
-          <Fact label="VAT collected" value={money(result.vatCollected, 0)} />
-          <Fact label="Business tax" value={money(result.businessTax, 0)} />
-          <Fact label="Profit after tax" value={money(result.profitAfterTax, 0)} />
+          <Fact label="Annual revenue excl. VAT" value={money(result.annualRevenueExclVat)} />
+          <Fact label="VAT collected" value={money(result.vatCollected)} />
+          <Fact label="Business tax" value={money(result.businessTax)} />
+          <Fact label="Profit after tax" value={money(result.profitAfterTax)} />
           <Fact label="After-tax margin" value={percent(result.afterTaxMargin)} />
         </Card>
       </section>
@@ -956,43 +1159,73 @@ function BreakEvenResultsPage({ calculation }) {
 }
 
 function PricingPage({ input, pricingScenarios, result, updateInput }) {
+  const [pinnedMarkups, setPinnedMarkups] = useState([]);
   if (!result) return <EmptyState title="No pricing yet" text="Calculate a preview first." />;
+  const selectedMarkup = Number(input.markupPercentage || 0);
+  const scenarioRows = ensureSelectedPricingScenario(pricingScenarios, result, selectedMarkup);
+
+  function togglePinnedMarkup(markup) {
+    setPinnedMarkups((current) => {
+      const normalized = Number(markup.toFixed(4));
+      return current.includes(normalized)
+        ? current.filter((item) => item !== normalized)
+        : [...current, normalized].slice(-5);
+    });
+  }
 
   return (
     <div className="page-stack">
       <section className="form-grid">
         <Card title="Selected Markup">
-          <NumberField
-            field="markupPercentage"
-            label="Markup over break-even"
-            onChange={updateInput}
-            unit="ratio"
-            value={input.markupPercentage}
-          />
-          <Fact label="Current rate excl. VAT" value={money(result.customerRateExclVat, 4)} />
-          <Fact label="Current rate incl. VAT" value={money(result.customerRateInclVat, 4)} />
+          <div className="slider-panel">
+            <label>
+              <span>Markup over break-even</span>
+              <strong>{percent(selectedMarkup)}</strong>
+              <input
+                max="0.5"
+                min="0"
+                onChange={(event) => updateInput("markupPercentage", event.target.value)}
+                step="0.01"
+                type="range"
+                value={selectedMarkup}
+              />
+            </label>
+            <div className="scenario-presets" aria-label="Scenario presets">
+              {[
+                ["Conservative", 0.05],
+                ["Realistic", 0.15],
+                ["Aggressive", 0.3]
+              ].map(([label, markup]) => (
+                <button
+                  className={Math.abs(selectedMarkup - markup) < 0.005 ? "active" : ""}
+                  key={label}
+                  onClick={() => updateInput("markupPercentage", markup)}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <Fact label="Current rate excl. VAT" value={money(result.customerRateExclVat)} />
+          <Fact label="Current rate incl. VAT" value={money(result.customerRateInclVat)} />
         </Card>
 
         <Card title="Markup Vs Margin">
           <p className="helper-text">
             A markup over break-even is not the same as a profit margin. The margin is calculated after revenue, cost and business tax.
           </p>
-          <Fact label="EBIT" value={money(result.ebitBeforeTax, 0)} />
+          <Fact label="EBIT" value={money(result.ebitBeforeTax)} />
           <Fact label="After-tax margin" value={percent(result.afterTaxMargin)} />
         </Card>
       </section>
 
       <Card title="Generated Pricing Scenarios">
-        <DataTable
-          columns={["Markup", "Rate excl. VAT", "Rate incl. VAT", "EBIT", "Profit after tax", "After-tax margin"]}
-          rows={pricingScenarios.map((row) => [
-            percent(row.markupPercentage),
-            money(row.customerRateExclVat, 4),
-            money(row.customerRateInclVat, 4),
-            money(row.ebitBeforeTax, 0),
-            money(row.profitAfterTax, 0),
-            percent(row.afterTaxMargin)
-          ])}
+        <PricingScenarioTable
+          onPin={togglePinnedMarkup}
+          pinnedMarkups={pinnedMarkups}
+          rows={scenarioRows}
+          selectedMarkup={selectedMarkup}
         />
       </Card>
     </div>
@@ -1000,19 +1233,75 @@ function PricingPage({ input, pricingScenarios, result, updateInput }) {
 }
 
 function SensitivityPage({ sensitivity }) {
+  const [selectedFuelPrice, setSelectedFuelPrice] = useState(
+    sensitivity?.fuelPriceSensitivity?.[Math.floor((sensitivity?.fuelPriceSensitivity?.length || 1) / 2)]
+      ?.fuelPricePerLiter || 1.55
+  );
+  const [selectedLoadFactor, setSelectedLoadFactor] = useState(
+    sensitivity?.loadFactorSensitivity?.[Math.floor((sensitivity?.loadFactorSensitivity?.length || 1) / 2)]
+      ?.loadFactor || 0.85
+  );
   if (!sensitivity) return <EmptyState title="No sensitivity yet" text="Calculate a preview first." />;
+  const fuelPoint = nearestSensitivityPoint(
+    sensitivity.fuelPriceSensitivity,
+    "fuelPricePerLiter",
+    selectedFuelPrice
+  );
+  const loadPoint = nearestSensitivityPoint(
+    sensitivity.loadFactorSensitivity,
+    "loadFactor",
+    selectedLoadFactor
+  );
 
   return (
     <div className="page-stack">
+      <section className="form-grid">
+        <Card title="Fuel Price Drag Test">
+          <SensitivitySlider
+            max={maxBy(sensitivity.fuelPriceSensitivity, "fuelPricePerLiter")}
+            min={minBy(sensitivity.fuelPriceSensitivity, "fuelPricePerLiter")}
+            onChange={setSelectedFuelPrice}
+            step="0.01"
+            value={selectedFuelPrice}
+            valueLabel={money(selectedFuelPrice, 2)}
+          />
+          <Fact label="Nearest break-even" value={money(fuelPoint?.breakEvenPerLoadedKm)} />
+          <Fact label="Variable cost/km" value={money(fuelPoint?.variableCostPerKm)} />
+          <SensitivityBars
+            labelFormatter={(row) => money(row.fuelPricePerLiter)}
+            rows={sensitivity.fuelPriceSensitivity}
+            valueField="breakEvenPerLoadedKm"
+          />
+        </Card>
+
+        <Card title="Load Factor Drag Test">
+          <SensitivitySlider
+            max={maxBy(sensitivity.loadFactorSensitivity, "loadFactor")}
+            min={minBy(sensitivity.loadFactorSensitivity, "loadFactor")}
+            onChange={setSelectedLoadFactor}
+            step="0.01"
+            value={selectedLoadFactor}
+            valueLabel={percent(selectedLoadFactor)}
+          />
+          <Fact label="Nearest break-even" value={money(loadPoint?.breakEvenPerLoadedKm)} />
+          <Fact label="Profit after tax" value={money(loadPoint?.profitAfterTax)} />
+          <SensitivityBars
+            labelFormatter={(row) => percent(row.loadFactor)}
+            rows={sensitivity.loadFactorSensitivity}
+            valueField="breakEvenPerLoadedKm"
+          />
+        </Card>
+      </section>
+
       <Card title="Vehicle Class Sensitivity">
         <DataTable
-          columns={["Vehicle", "Payload", "EUR/loaded km", "EUR/tonne-km", "Annual tonne-km"]}
+          columns={["Vehicle", "Payload", `${currencyCode()}/loaded km`, `${currencyCode()}/tonne-km`, "Annual tonne-km"]}
           rows={sensitivity.vehicleClassSensitivity.map((row) => [
             row.vehicleClassName,
-            `${format(row.payloadCapacityTons, 1)} t`,
-            money(row.breakEvenPerLoadedKm, 4),
-            money(row.breakEvenPerTonneKm, 4),
-            format(row.annualTonneKm, 0)
+            `${format(row.payloadCapacityTons)} t`,
+            money(row.breakEvenPerLoadedKm),
+            money(row.breakEvenPerTonneKm),
+            format(row.annualTonneKm)
           ])}
         />
       </Card>
@@ -1020,11 +1309,11 @@ function SensitivityPage({ sensitivity }) {
       <section className="two-column">
         <Card title="Payload Utilisation">
           <DataTable
-            columns={["Utilisation", "EUR/tonne-km", "Annual tonne-km"]}
+            columns={["Utilisation", `${currencyCode()}/tonne-km`, "Annual tonne-km"]}
             rows={sensitivity.payloadUtilisationSensitivity.map((row) => [
               percent(row.payloadUtilisation),
-              money(row.breakEvenPerTonneKm, 4),
-              format(row.annualTonneKm, 0)
+              money(row.breakEvenPerTonneKm),
+              format(row.annualTonneKm)
             ])}
           />
         </Card>
@@ -1034,9 +1323,9 @@ function SensitivityPage({ sensitivity }) {
             columns={["Fuel price", "Variable cost/km", "Total cost", "Break-even"]}
             rows={sensitivity.fuelPriceSensitivity.map((row) => [
               money(row.fuelPricePerLiter, 2),
-              money(row.variableCostPerKm, 4),
-              money(row.totalAnnualCost, 0),
-              money(row.breakEvenPerLoadedKm, 4)
+              money(row.variableCostPerKm),
+              money(row.totalAnnualCost),
+              money(row.breakEvenPerLoadedKm)
             ])}
           />
         </Card>
@@ -1072,15 +1361,42 @@ function HistoryPage({
   onDelete,
   onOpen
 }) {
+  const [selectedIds, setSelectedIds] = useState([]);
+  const selectedRuns = history.filter((run) => selectedIds.includes(String(run.id)));
+
+  function toggleRunSelection(id) {
+    const runId = String(id);
+    setSelectedIds((current) => {
+      if (current.includes(runId)) return current.filter((item) => item !== runId);
+      return [...current, runId].slice(-3);
+    });
+  }
+
   return (
     <div className="page-stack">
+      {selectedRuns.length > 0 && (
+        <Card title="Run Comparison">
+          <RunComparison runs={selectedRuns} />
+        </Card>
+      )}
+
       <Card title="Saved Runs">
         {history.length === 0 ? (
-          <p className="helper-text">No saved runs are available in the active backend session.</p>
+          <p className="helper-text">
+            No saved runs are available yet. Saved runs live in the backend database, so they survive refreshes when the API is connected.
+          </p>
         ) : (
           <div className="history-list">
             {history.map((run) => (
               <article className="history-row" key={run.id}>
+                <label className="compare-check">
+                  <input
+                    checked={selectedIds.includes(String(run.id))}
+                    onChange={() => toggleRunSelection(run.id)}
+                    type="checkbox"
+                  />
+                  <span>Compare</span>
+                </label>
                 <div>
                   <strong>{run.runName}</strong>
                   <span>
@@ -1088,8 +1404,8 @@ function HistoryPage({
                   </span>
                 </div>
                 <div className="history-metrics">
-                  <span>{money(run.breakEvenPerLoadedKm, 4)}</span>
-                  <span>{money(run.profitAfterTax, 0)}</span>
+                  <span>{money(run.breakEvenPerLoadedKm)} / km</span>
+                  <span>{money(run.profitAfterTax)} profit</span>
                 </div>
                 <div className="row-actions">
                   <button onClick={() => onOpen(run.id)} type="button">Open</button>
@@ -1125,6 +1441,137 @@ function WorkflowList({ rows, setActivePage }) {
   );
 }
 
+function FirstRunGuide({ breakEven, onCompany, onInputs, onPricing }) {
+  return (
+    <section className="first-run-panel">
+      <div>
+        <p className="eyebrow">First run</p>
+        <h2>{breakEven} is the current break-even loaded km rate.</h2>
+        <p>
+          Break-even covers the annual fleet cost divided by loaded kilometres. Tonne-km adds payload into the same question: how much cost sits behind every transported tonne over one kilometre.
+        </p>
+      </div>
+      <div className="first-run-steps">
+        <button onClick={onCompany} type="button">
+          <span>1</span>
+          <strong>Country & company</strong>
+          <small>{friendlyCompanyTypeName("PFA / II")} means an individual authorised business.</small>
+        </button>
+        <button onClick={onInputs} type="button">
+          <span>2</span>
+          <strong>Vehicle & activity</strong>
+          <small>Set vehicle groups, loaded km, payload and annual costs.</small>
+        </button>
+        <button onClick={onPricing} type="button">
+          <span>3</span>
+          <strong>Pricing</strong>
+          <small>Choose a markup and compare profit outcomes.</small>
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function PricingScenarioTable({ onPin, pinnedMarkups, rows, selectedMarkup }) {
+  return (
+    <div className="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            {["Pin", "Markup", "Rate excl. VAT", "Rate incl. VAT", "EBIT", "Profit after tax", "After-tax margin"].map((column) => (
+              <th key={column}>{column}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const markup = Number(row.markupPercentage || 0);
+            const selected = Math.abs(markup - selectedMarkup) < 0.005;
+            const pinned = pinnedMarkups.includes(Number(markup.toFixed(4)));
+            return (
+              <tr className={`${selected ? "selected-row" : ""} ${pinned ? "pinned-row" : ""}`} key={markup}>
+                <td>
+                  <button className="pin-button" onClick={() => onPin(markup)} type="button">
+                    {pinned ? "Pinned" : "Pin"}
+                  </button>
+                </td>
+                <td>{percent(markup)}</td>
+                <td>{money(row.customerRateExclVat)}</td>
+                <td>{money(row.customerRateInclVat)}</td>
+                <td>{money(row.ebitBeforeTax)}</td>
+                <td>{money(row.profitAfterTax)}</td>
+                <td>{percent(row.afterTaxMargin)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SensitivitySlider({ max, min, onChange, step, value, valueLabel }) {
+  return (
+    <div className="slider-panel">
+      <label>
+        <span>Drag assumption</span>
+        <strong>{valueLabel}</strong>
+        <input
+          max={max}
+          min={min}
+          onChange={(event) => onChange(Number(event.target.value))}
+          step={step}
+          type="range"
+          value={value}
+        />
+      </label>
+    </div>
+  );
+}
+
+function SensitivityBars({ labelFormatter, rows, valueField }) {
+  const maxValue = maxBy(rows, valueField);
+  return (
+    <div className="sensitivity-bars">
+      {rows.map((row) => {
+        const value = Number(row[valueField]);
+        return (
+          <div className="sensitivity-bar" key={`${labelFormatter(row)}-${value}`}>
+            <span>{labelFormatter(row)}</span>
+            <div aria-hidden="true">
+              <i style={{ width: `${clampPercent((value / maxValue) * 100)}%` }} />
+            </div>
+            <strong>{money(value)}</strong>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RunComparison({ runs }) {
+  const baseline = runs[0];
+  return (
+    <div className="comparison-grid">
+      {runs.map((run) => (
+        <article className="comparison-card" key={run.id}>
+          <strong>{run.runName}</strong>
+          <span>{dateTime(run.createdAt)}</span>
+          <Fact label="Break-even" value={money(run.breakEvenPerLoadedKm)} />
+          <Fact label="Customer rate" value={money(run.customerRateExclVat)} />
+          <Fact label="Annual cost" value={money(run.totalAnnualCost)} />
+          <Fact label="Profit after tax" value={money(run.profitAfterTax)} />
+          {baseline && run.id !== baseline.id && (
+            <small>
+              Diff vs first: {signedMoney(Number(run.breakEvenPerLoadedKm) - Number(baseline.breakEvenPerLoadedKm), 4)} / km
+            </small>
+          )}
+        </article>
+      ))}
+    </div>
+  );
+}
+
 function Card({ children, title }) {
   return (
     <section className="card">
@@ -1137,7 +1584,10 @@ function Card({ children, title }) {
 function Kpi({ label, unit, value }) {
   return (
     <article className="kpi-card">
-      <span>{label}</span>
+      <span>
+        {label}
+        <InfoTip text={metricHelp[label]} />
+      </span>
       <strong>{value}</strong>
       <small>{unit}</small>
     </article>
@@ -1147,7 +1597,10 @@ function Kpi({ label, unit, value }) {
 function MetricTile({ label, value }) {
   return (
     <article className="metric-tile">
-      <span>{label}</span>
+      <span>
+        {label}
+        <InfoTip text={metricHelp[label]} />
+      </span>
       <strong>{value}</strong>
     </article>
   );
@@ -1171,20 +1624,22 @@ function FleetMixRow({ group }) {
   );
 }
 
-function NumberField({ field, integer = false, label, onChange, unit, value }) {
+function NumberField({ error, field, integer = false, label, onChange, unit, value }) {
   return (
-    <label className="number-field">
+    <label className={`number-field ${error ? "has-error" : ""}`}>
       <span>{label}</span>
       <div>
         <input
+          aria-invalid={Boolean(error)}
           inputMode={integer ? "numeric" : "decimal"}
           onChange={(event) => onChange(field, event.target.value)}
           step={integer ? "1" : "0.01"}
           type="number"
           value={integer ? formatInputInteger(value) : formatInputNumber(value)}
         />
-        <small>{unit}</small>
+        <small>{displayUnit(unit)}</small>
       </div>
+      {error && <em>{error}</em>}
     </label>
   );
 }
@@ -1216,7 +1671,10 @@ function SelectField({ label, onChange, options, value }) {
 function Fact({ label, value }) {
   return (
     <div className="fact-row">
-      <span>{label}</span>
+      <span>
+        {label}
+        <InfoTip text={metricHelp[label]} />
+      </span>
       <strong>{value}</strong>
     </div>
   );
@@ -1250,8 +1708,39 @@ function DataTable({ columns, rows }) {
 function StatusPill({ stale, status }) {
   return (
     <div className={`status-pill ${stale ? "stale" : ""}`}>
-      <span>{stale ? "Needs calculate" : "Current"}</span>
+      <span>{stale ? "Stale" : "Current"}</span>
       <strong>{status}</strong>
+    </div>
+  );
+}
+
+function InfoTip({ text }) {
+  if (!text) return null;
+  return (
+    <button aria-label={text} className="info-tip" title={text} type="button">
+      ?
+    </button>
+  );
+}
+
+function StaleBanner({ isCalculating, onCalculate }) {
+  return (
+    <section className="stale-banner">
+      <div>
+        <strong>Recalculate needed</strong>
+        <span>The visible numbers are a draft preview until you calculate this run.</span>
+      </div>
+      <button disabled={isCalculating} onClick={onCalculate} type="button">
+        {isCalculating ? "Calculating..." : "Recalculate now"}
+      </button>
+    </section>
+  );
+}
+
+function Toast({ message }) {
+  return (
+    <div className="toast" role="status">
+      {message}
     </div>
   );
 }
@@ -1541,9 +2030,15 @@ function normalizedPreviewInput(input, vehicles = []) {
   };
 }
 
-function money(value) {
+function money(value, decimals = 2) {
   if (value == null || Number.isNaN(Number(value))) return "n/a";
-  return `EUR ${format(value)}`;
+  return Number(value).toLocaleString(activeFormatContext.locale, {
+    currency: activeFormatContext.currency,
+    currencyDisplay: "narrowSymbol",
+    maximumFractionDigits: decimals,
+    minimumFractionDigits: decimals,
+    style: "currency"
+  });
 }
 
 function percent(value) {
@@ -1553,7 +2048,7 @@ function percent(value) {
 
 function format(value) {
   if (value == null || Number.isNaN(Number(value))) return "n/a";
-  return Number(value).toLocaleString("en-US", {
+  return Number(value).toLocaleString(activeFormatContext.locale, {
     maximumFractionDigits: 2,
     minimumFractionDigits: 2
   });
@@ -1601,5 +2096,202 @@ function clampPercent(value) {
 
 function dateTime(value) {
   if (!value) return "n/a";
-  return new Date(value).toLocaleString();
+  return new Date(value).toLocaleString(activeFormatContext.locale, {
+    dateStyle: "medium",
+    timeStyle: "short"
+  });
+}
+
+function setActiveFormatContext(country) {
+  activeFormatContext = getFormatContext(country);
+}
+
+function getFormatContext(country) {
+  const currency = currencyFromCountry(country);
+  return {
+    currency,
+    locale: localeByCountryCode[country?.code] || "en-US"
+  };
+}
+
+function currencyFromCountry(country) {
+  const rawCurrency = country?.currency || "EUR";
+  if (rawCurrency.includes("EUR")) return "EUR";
+  return rawCurrency.split("/")[0] || "EUR";
+}
+
+function currencyCode() {
+  return activeFormatContext.currency;
+}
+
+function currencyUnit(period) {
+  return `${currencyCode()}/${period}`;
+}
+
+function displayUnit(unit) {
+  if (!unit) return "";
+  return unit.replace(/^EUR/, currencyCode());
+}
+
+function signedMoney(value, decimals = 2) {
+  if (value == null || Number.isNaN(Number(value))) return "n/a";
+  const prefix = Number(value) >= 0 ? "+" : "";
+  return `${prefix}${money(value, decimals)}`;
+}
+
+function formatMonth(value) {
+  if (!value) return "n/a";
+  const normalized = String(value).length === 7 ? `${value}-01` : value;
+  return new Date(normalized).toLocaleDateString(activeFormatContext.locale, {
+    month: "long",
+    year: "numeric"
+  });
+}
+
+function pageFromHash() {
+  const hashPage = window.location.hash.replace(/^#\/?/, "");
+  return pages.some(([key]) => key === hashPage) ? hashPage : "dashboard";
+}
+
+function friendlyCompanyTypeName(name) {
+  const labels = {
+    "PFA / II": "PFA / II - sole trader",
+    "Branch / PE": "Branch / permanent establishment",
+    SRL: "SRL - limited liability company",
+    SA: "SA - joint stock company",
+    "s.r.o.": "s.r.o. - limited liability company",
+    "GmbH": "GmbH - limited liability company",
+    "Kft.": "Kft. - limited liability company",
+    "EOOD/OOD": "EOOD/OOD - limited liability company",
+    "Manual entity": "Manual entity"
+  };
+  return labels[name] || name;
+}
+
+function shortSectionLabel(title) {
+  return title
+    .replace(" And Load", "")
+    .replace(" And Fixed Cost", " & Fixed");
+}
+
+function fieldValidationMessage(field, value) {
+  if (value === "" || value == null || Number.isNaN(Number(value))) {
+    return "Required";
+  }
+
+  const number = Number(value);
+  if (["loadFactor", "payloadUtilisation", "markupPercentage", "targetAfterTaxMargin"].includes(field)) {
+    if (number < 0 || number > 1) return "Use a value between 0.00 and 1.00";
+  }
+
+  if (field === "vehicleCount" && (!Number.isInteger(number) || number < 1)) {
+    return "Use a whole number of vehicles";
+  }
+
+  if (
+    [
+      "dailyKm",
+      "operatingDaysPerYear",
+      "payloadCapacityTons",
+      "fuelConsumptionLPer100Km",
+      "fuelPricePerLiter"
+    ].includes(field) &&
+    number <= 0
+  ) {
+    return "Must be greater than 0.00";
+  }
+
+  if (
+    [
+      "tyresAnnualCost",
+      "maintenanceAnnualCost",
+      "roadFeesAnnualCost",
+      "driverSalaryAnnual",
+      "driverPerDiemDaily",
+      "ownershipOrLeasingAnnual",
+      "insuranceAnnual",
+      "vehicleTaxAnnual",
+      "structuralIndirectCostsAnnual"
+    ].includes(field) &&
+    number < 0
+  ) {
+    return "Cannot be negative";
+  }
+
+  return "";
+}
+
+function ensureSelectedPricingScenario(rows, result, selectedMarkup) {
+  const currentRow = {
+    markupPercentage: selectedMarkup,
+    customerRateExclVat: result.customerRateExclVat,
+    customerRateInclVat: result.customerRateInclVat,
+    ebitBeforeTax: result.ebitBeforeTax,
+    profitAfterTax: result.profitAfterTax,
+    afterTaxMargin: result.afterTaxMargin
+  };
+  const hasSelected = rows.some(
+    (row) => Math.abs(Number(row.markupPercentage || 0) - selectedMarkup) < 0.005
+  );
+  return [...(hasSelected ? rows : [...rows, currentRow])].sort(
+    (left, right) => Number(left.markupPercentage) - Number(right.markupPercentage)
+  );
+}
+
+function nearestSensitivityPoint(rows = [], field, value) {
+  return rows.reduce((best, row) => {
+    if (!best) return row;
+    return Math.abs(Number(row[field]) - value) < Math.abs(Number(best[field]) - value)
+      ? row
+      : best;
+  }, null);
+}
+
+function minBy(rows = [], field) {
+  return rows.reduce((min, row) => Math.min(min, Number(row[field])), Number.POSITIVE_INFINITY);
+}
+
+function maxBy(rows = [], field) {
+  return rows.reduce((max, row) => Math.max(max, Number(row[field])), Number.NEGATIVE_INFINITY);
+}
+
+function buildCurrentScenarioCsv(runName, result) {
+  const rows = [
+    ["Run", runName],
+    ["Metric", "Value"],
+    ["Total annual cost", result.totalAnnualCost],
+    ["Break-even loaded km", result.breakEvenPerLoadedKm],
+    ["Break-even tonne-km", result.breakEvenPerTonneKm],
+    ["Customer rate excl. VAT", result.customerRateExclVat],
+    ["Customer rate incl. VAT", result.customerRateInclVat],
+    ["EBIT before tax", result.ebitBeforeTax],
+    ["Profit after tax", result.profitAfterTax],
+    [],
+    ["Group", "Vehicle type", "Vehicles", "Annual cost", "Break-even loaded km", "Customer rate", "Profit after tax"],
+    ...(result.vehicleGroupResults || []).map((group) => [
+      group.name,
+      group.vehicleClassName,
+      group.vehicleCount,
+      group.groupTotals.totalAnnualCost,
+      group.groupTotals.breakEvenPerLoadedKm,
+      group.groupTotals.customerRateExclVat,
+      group.groupTotals.profitAfterTax
+    ])
+  ];
+
+  return rows.map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
+function csvCell(value) {
+  if (value == null) return "";
+  const text = String(value);
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function slugify(value) {
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
 }
