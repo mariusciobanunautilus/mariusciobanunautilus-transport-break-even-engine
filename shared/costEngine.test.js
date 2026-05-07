@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  aggregatePeriodsForAnnualBreakEven,
   calculateBreakEven,
   computeLongDistance40t,
   computeRegional40t,
@@ -9,6 +10,7 @@ import {
   defaultBlueprintCalculationInput,
   generatePricingScenarios,
   generateSensitivity,
+  periodWarningCodes,
   taxRules
 } from "./costEngine.js";
 
@@ -365,6 +367,151 @@ test("blueprint pricing and sensitivity previews produce expected matrices", () 
   assert.equal(sensitivity.loadFactorSensitivity.length, 2);
   assert.equal(sensitivity.markupSensitivity.length, 2);
   assert.equal(sensitivity.fuelPriceSensitivity.length, 2);
+});
+
+test("time-weighted layer uses total cost over loaded km instead of simple average", () => {
+  const aggregation = aggregatePeriodsForAnnualBreakEven({
+    calculationMode: "planned_annual",
+    periods: [
+      {
+        periodStart: "2026-01-01",
+        periodEnd: "2026-06-30",
+        dataStatus: "planned",
+        loadedKm: 60000,
+        otherCost: 60000 * 1.4
+      },
+      {
+        periodStart: "2026-07-01",
+        periodEnd: "2026-12-31",
+        dataStatus: "planned",
+        loadedKm: 40000,
+        otherCost: 40000 * 1.8
+      }
+    ]
+  });
+
+  assertClose(aggregation.totalAnnualCost, 156000);
+  assertClose(aggregation.loadedRevenueKm, 100000);
+  assertClose(aggregation.breakEvenPerLoadedKm, 1.56);
+});
+
+test("time-weighted rolling forecast combines completed actuals with future forecasts", () => {
+  const aggregation = aggregatePeriodsForAnnualBreakEven({
+    calculationMode: "rolling_forecast",
+    asOfDate: "2026-02-28",
+    periods: [
+      {
+        periodStart: "2026-01-01",
+        periodEnd: "2026-01-31",
+        dataStatus: "actual",
+        loadedKm: 10000,
+        otherCost: 14000
+      },
+      {
+        periodStart: "2026-02-01",
+        periodEnd: "2026-02-28",
+        dataStatus: "actual",
+        loadedKm: 10000,
+        otherCost: 15000
+      },
+      {
+        periodStart: "2026-03-01",
+        periodEnd: "2026-03-31",
+        dataStatus: "forecast",
+        loadedKm: 10000,
+        otherCost: 16000
+      }
+    ]
+  });
+
+  assertClose(aggregation.totalAnnualCost, 45000);
+  assertClose(aggregation.loadedRevenueKm, 30000);
+  assertClose(aggregation.breakEvenPerLoadedKm, 1.5);
+  assert.equal(aggregation.dataCompletenessStatus, "complete");
+});
+
+test("time-weighted calculation preview applies period totals to pricing and warnings", () => {
+  const calculation = calculateBreakEven({
+    calculationMode: "rolling_forecast",
+    asOfDate: "2026-02-28",
+    input: {
+      ...defaultBlueprintCalculationInput,
+      countryId: 1,
+      companyTypeId: 2,
+      markupPercentage: 0.1
+    },
+    taxProfile: {
+      vatRegistered: true,
+      vatRate: 0.2,
+      employerContributionRate: 0.21,
+      effectiveBusinessTaxRate: 0.23,
+      vehicleTaxDefaultAnnual: 1200
+    },
+    periods: [
+      {
+        periodStart: "2026-01-01",
+        periodEnd: "2026-01-31",
+        dataStatus: "actual",
+        totalKm: 12000,
+        loadedKm: 10000,
+        otherCost: 14000
+      },
+      {
+        periodStart: "2026-02-01",
+        periodEnd: "2026-02-28",
+        dataStatus: "planned",
+        totalKm: 12000,
+        loadedKm: 10000,
+        otherCost: 15000
+      },
+      {
+        periodStart: "2026-03-01",
+        periodEnd: "2026-03-31",
+        dataStatus: "forecast",
+        totalKm: 12000,
+        loadedKm: 10000,
+        otherCost: 16000
+      }
+    ]
+  });
+
+  assert.equal(calculation.calculationMode, "rolling_forecast");
+  assertClose(calculation.result.totalAnnualCost, 45000);
+  assertClose(calculation.result.loadedKmYear, 30000);
+  assertClose(calculation.result.breakEvenPerLoadedKm, 1.5);
+  assertClose(calculation.result.customerRateExclVat, 1.65);
+  assert.equal(
+    calculation.result.warnings.includes(periodWarningCodes.MISSING_ACTUAL_PERIODS),
+    true
+  );
+  assert.equal(calculation.result.dataCompletenessStatus, "partial");
+});
+
+test("snapshot mode keeps current engine result and labels the full-year assumption", () => {
+  const calculation = calculateBreakEven({
+    calculationMode: "snapshot",
+    input: {
+      ...defaultBlueprintCalculationInput,
+      countryId: 1,
+      companyTypeId: 2
+    },
+    taxProfile: {
+      vatRegistered: true,
+      vatRate: 0.2,
+      employerContributionRate: 0.21,
+      effectiveBusinessTaxRate: 0.23,
+      vehicleTaxDefaultAnnual: 1200
+    }
+  });
+
+  assert.equal(calculation.result.calculationMode, "snapshot");
+  assert.equal(
+    calculation.result.warnings.includes(
+      periodWarningCodes.SNAPSHOT_ASSUMPTION_FULL_YEAR
+    ),
+    true
+  );
+  assertClose(calculation.result.annualTotalKm, 108000);
 });
 
 function assertClose(actual, expected, tolerance = 1e-9) {

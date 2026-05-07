@@ -12,11 +12,14 @@ import {
 
 export {
   CalculationValidationError,
+  aggregatePeriodsForAnnualBreakEven,
   blueprintFormulaDefinitions,
   blueprintLoadFactors,
   blueprintPayloadUtilisations,
   blueprintPricingMarkups,
   calculateBreakEven,
+  calculationModes,
+  currentEngineVersion,
   defaultBlueprintCalculationInput,
   generatePricingScenarios,
   generateSensitivity,
@@ -25,7 +28,8 @@ export {
   getCompanyTypesForCountry,
   getCountries,
   getTaxProfile,
-  getVehicleClasses
+  getVehicleClasses,
+  periodWarningCodes
 } from "./blueprintEngine.js";
 
 export {

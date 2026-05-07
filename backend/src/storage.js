@@ -149,9 +149,18 @@ async function saveDatabaseRun(run) {
          input_snapshot,
          tax_snapshot,
          vehicle_snapshot,
-         created_by
+         created_by,
+         calculation_mode,
+         plan_year,
+         as_of_date,
+         scenario_status,
+         engine_version,
+         scenario_name,
+         scenario_version,
+         approved_at,
+         approved_by
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
        RETURNING id, created_at`,
       [
         databaseProfileCode(run.profile),
@@ -164,7 +173,16 @@ async function saveDatabaseRun(run) {
         run.inputSnapshot,
         run.taxSnapshot,
         run.vehicleSnapshot,
-        run.createdBy
+        run.createdBy,
+        run.calculationMode,
+        run.planYear,
+        run.asOfDate,
+        run.scenarioStatus,
+        run.engineVersion,
+        run.scenarioName,
+        run.scenarioVersion,
+        run.approvedAt,
+        run.approvedBy
       ]
     );
 
@@ -179,6 +197,10 @@ async function saveDatabaseRun(run) {
        VALUES ($1, $2)`,
       [savedRun.id, savedRun.resultSnapshot]
     );
+
+    for (const period of savedRun.periods) {
+      await insertScenarioPeriod(client, savedRun.id, period);
+    }
 
     for (const scenario of savedRun.pricingScenarios) {
       await client.query(
@@ -254,9 +276,37 @@ async function getDatabaseRun(id, client = null) {
      ORDER BY markup_percentage ASC`,
     [id]
   );
+  const periods = await executor.query(
+    `SELECT
+       period_start,
+       period_end,
+       period_type,
+       data_status,
+       total_km,
+       loaded_km,
+       load_factor,
+       fuel_price_per_liter,
+       fuel_consumption_l_per_100km,
+       fuel_cost,
+       tyres_cost,
+       maintenance_cost,
+       road_fees_cost,
+       driver_cost,
+       fixed_vehicle_cost,
+       structural_overhead_cost,
+       other_cost,
+       revenue_excl_vat,
+       notes,
+       raw_period
+     FROM scenario_periods
+     WHERE calculation_run_id = $1
+     ORDER BY period_start NULLS LAST, period_end NULLS LAST, id ASC`,
+    [id]
+  );
 
   return {
     ...run,
+    periods: periods.rows.map(mapScenarioPeriodRow),
     pricingScenarios: scenarios.rows.map((row) => ({
       markupPercentage: Number(row.markup_percentage),
       customerRateExclVat: Number(row.customer_rate_excl_vat),
@@ -267,6 +317,62 @@ async function getDatabaseRun(id, client = null) {
       afterTaxMargin: Number(row.after_tax_margin)
     }))
   };
+}
+
+async function insertScenarioPeriod(client, calculationRunId, period) {
+  await client.query(
+    `INSERT INTO scenario_periods (
+       calculation_run_id,
+       period_start,
+       period_end,
+       period_type,
+       data_status,
+       total_km,
+       loaded_km,
+       load_factor,
+       fuel_price_per_liter,
+       fuel_consumption_l_per_100km,
+       fuel_cost,
+       tyres_cost,
+       maintenance_cost,
+       road_fees_cost,
+       driver_cost,
+       fixed_vehicle_cost,
+       structural_overhead_cost,
+       other_cost,
+       revenue_excl_vat,
+       notes,
+       raw_period
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+    [
+      calculationRunId,
+      period.periodStart ?? period.period_start ?? null,
+      period.periodEnd ?? period.period_end ?? null,
+      period.periodType ?? period.period_type ?? "month",
+      period.dataStatus ?? period.data_status ?? "planned",
+      period.totalKm ?? period.total_km ?? null,
+      period.loadedKm ?? period.loaded_km ?? period.loadedRevenueKm ?? null,
+      period.loadFactor ?? period.load_factor ?? period.loadedRatio ?? null,
+      period.fuelPricePerLiter ?? period.fuel_price_per_liter ?? null,
+      period.fuelConsumptionLPer100Km ??
+        period.fuel_consumption_l_per_100km ??
+        null,
+      period.fuelCost ?? period.fuel_cost ?? null,
+      period.tyresCost ?? period.tyres_cost ?? period.tiresCost ?? null,
+      period.maintenanceCost ?? period.maintenance_cost ?? null,
+      period.roadFeesCost ?? period.road_fees_cost ?? null,
+      period.driverCost ?? period.driver_cost ?? null,
+      period.fixedVehicleCost ?? period.fixed_vehicle_cost ?? null,
+      period.structuralOverheadCost ??
+        period.structural_overhead_cost ??
+        null,
+      period.otherCost ?? period.other_cost ?? null,
+      period.revenueExclVat ?? period.revenue_excl_vat ?? null,
+      period.notes ?? null,
+      period
+    ]
+  );
 }
 
 function normalizeRunRecord(record) {
@@ -307,6 +413,25 @@ function normalizeRunRecord(record) {
     vehicleSnapshot: record.vehicleSnapshot ?? legacyOutput?.vehicleSnapshot ?? null,
     resultSnapshot,
     pricingScenarios: record.pricingScenarios ?? legacyOutput?.pricingScenarios ?? [],
+    periods: record.periods ?? record.scenarioPeriods ?? legacyOutput?.periods ?? [],
+    calculationMode:
+      record.calculationMode ??
+      record.calculation_mode ??
+      resultSnapshot?.calculationMode ??
+      inputSnapshot.calculationMode ??
+      "snapshot",
+    planYear: record.planYear ?? record.plan_year ?? inputSnapshot.planYear ?? null,
+    asOfDate: record.asOfDate ?? record.as_of_date ?? inputSnapshot.asOfDate ?? null,
+    scenarioStatus:
+      record.scenarioStatus ?? record.scenario_status ?? record.status ?? "draft",
+    engineVersion:
+      record.engineVersion ?? record.engine_version ?? legacyOutput?.engineVersion ?? null,
+    scenarioName:
+      record.scenarioName ?? record.scenario_name ?? record.runName ?? null,
+    scenarioVersion:
+      record.scenarioVersion ?? record.scenario_version ?? 1,
+    approvedAt: record.approvedAt ?? record.approved_at ?? null,
+    approvedBy: record.approvedBy ?? record.approved_by ?? null,
     createdBy: record.createdBy ?? record.actor ?? "local-user",
     createdAt: record.createdAt ?? now
   };
@@ -327,6 +452,18 @@ function mapRunRow(row) {
     resultSnapshot:
       row.result_snapshot ?? outputSnapshot.result ?? outputSnapshot.outputs ?? outputSnapshot,
     pricingScenarios: outputSnapshot.pricingScenarios ?? [],
+    periods: outputSnapshot.periods ?? [],
+    calculationMode:
+      row.calculation_mode ?? outputSnapshot.calculationMode ?? "snapshot",
+    planYear: row.plan_year ?? outputSnapshot.planYear ?? null,
+    asOfDate: dateOnly(row.as_of_date) ?? outputSnapshot.asOfDate ?? null,
+    scenarioStatus:
+      row.scenario_status ?? outputSnapshot.scenarioStatus ?? "draft",
+    engineVersion: row.engine_version ?? outputSnapshot.engineVersion ?? null,
+    scenarioName: row.scenario_name ?? outputSnapshot.scenarioName ?? row.run_name ?? null,
+    scenarioVersion: row.scenario_version ?? outputSnapshot.scenarioVersion ?? 1,
+    approvedAt: toIso(row.approved_at),
+    approvedBy: row.approved_by ?? null,
     createdBy: row.created_by ?? "local-user",
     createdAt: toIso(row.created_at)
   };
@@ -345,10 +482,42 @@ function toRunListItem(run) {
     breakEvenPerLoadedKm: run.resultSnapshot?.breakEvenPerLoadedKm,
     customerRateExclVat: run.resultSnapshot?.customerRateExclVat,
     profitAfterTax: run.resultSnapshot?.profitAfterTax,
+    calculationMode: run.calculationMode,
+    planYear: run.planYear,
+    asOfDate: run.asOfDate,
+    scenarioStatus: run.scenarioStatus,
+    scenarioName: run.scenarioName,
+    scenarioVersion: run.scenarioVersion,
+    engineVersion: run.engineVersion,
     inputSnapshot: run.inputSnapshot,
     taxSnapshot: run.taxSnapshot,
     vehicleSnapshot: run.vehicleSnapshot,
     createdAt: run.createdAt
+  };
+}
+
+function mapScenarioPeriodRow(row) {
+  return {
+    ...(row.raw_period ?? {}),
+    periodStart: dateOnly(row.period_start),
+    periodEnd: dateOnly(row.period_end),
+    periodType: row.period_type,
+    dataStatus: row.data_status,
+    totalKm: nullableNumber(row.total_km),
+    loadedKm: nullableNumber(row.loaded_km),
+    loadFactor: nullableNumber(row.load_factor),
+    fuelPricePerLiter: nullableNumber(row.fuel_price_per_liter),
+    fuelConsumptionLPer100Km: nullableNumber(row.fuel_consumption_l_per_100km),
+    fuelCost: nullableNumber(row.fuel_cost),
+    tyresCost: nullableNumber(row.tyres_cost),
+    maintenanceCost: nullableNumber(row.maintenance_cost),
+    roadFeesCost: nullableNumber(row.road_fees_cost),
+    driverCost: nullableNumber(row.driver_cost),
+    fixedVehicleCost: nullableNumber(row.fixed_vehicle_cost),
+    structuralOverheadCost: nullableNumber(row.structural_overhead_cost),
+    otherCost: nullableNumber(row.other_cost),
+    revenueExclVat: nullableNumber(row.revenue_excl_vat),
+    notes: row.notes
   };
 }
 
@@ -407,7 +576,15 @@ function buildOutputSnapshot(run) {
     taxProfile: run.taxSnapshot,
     vehicleSnapshot: run.vehicleSnapshot,
     result: run.resultSnapshot,
-    pricingScenarios: run.pricingScenarios
+    pricingScenarios: run.pricingScenarios,
+    periods: run.periods,
+    calculationMode: run.calculationMode,
+    planYear: run.planYear,
+    asOfDate: run.asOfDate,
+    scenarioStatus: run.scenarioStatus,
+    engineVersion: run.engineVersion,
+    scenarioName: run.scenarioName,
+    scenarioVersion: run.scenarioVersion
   };
 }
 
@@ -432,5 +609,15 @@ function businessModelNameFromInput(input) {
 }
 
 function toIso(value) {
+  if (value == null) return null;
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function dateOnly(value) {
+  const iso = toIso(value);
+  return iso ? iso.slice(0, 10) : null;
+}
+
+function nullableNumber(value) {
+  return value == null ? null : Number(value);
 }

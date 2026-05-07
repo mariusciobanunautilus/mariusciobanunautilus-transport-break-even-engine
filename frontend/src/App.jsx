@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   calculateBreakEven,
+  calculationModes,
   defaultBlueprintCalculationInput,
   generatePricingScenarios,
   generateSensitivity,
@@ -19,6 +20,7 @@ const pages = [
   ["dashboard", "Dashboard"],
   ["company", "Company & Tax"],
   ["inputs", "Inputs"],
+  ["time", "Time Model"],
   ["results", "Break-even"],
   ["pricing", "Pricing"],
   ["sensitivity", "Sensitivity"],
@@ -75,6 +77,26 @@ const vehicleGroupFields = vehicleInputSections.flatMap((section) =>
   section.fields.map(([field]) => field)
 );
 
+const calculationModeLabels = {
+  snapshot: "Snapshot",
+  planned_annual: "Planned Annual",
+  rolling_forecast: "Rolling Forecast",
+  actual_annual: "Actual Annual"
+};
+
+const scenarioStatusOptions = ["draft", "reviewed", "approved", "archived"];
+
+const periodCostFields = [
+  ["fuelCost", "Fuel"],
+  ["tyresCost", "Tyres"],
+  ["maintenanceCost", "Maintenance"],
+  ["roadFeesCost", "Road fees"],
+  ["driverCost", "Driver"],
+  ["fixedVehicleCost", "Vehicle fixed"],
+  ["structuralOverheadCost", "Overhead"],
+  ["otherCost", "Other"]
+];
+
 const localeByCountryCode = {
   AT: "de-AT",
   BG: "bg-BG",
@@ -114,6 +136,8 @@ export default function App() {
   const [reference, setReference] = useState(fallbackReference);
   const [activePage, setActivePage] = useState(() => pageFromHash());
   const [input, setInput] = useState(defaultBlueprintCalculationInput);
+  const [timeModel, setTimeModel] = useState(() => defaultTimeModel());
+  const [periods, setPeriods] = useState([]);
   const [runName, setRunName] = useState("Baseline pricing run");
   const [calculation, setCalculation] = useState(null);
   const [pricingScenarios, setPricingScenarios] = useState([]);
@@ -176,16 +200,16 @@ export default function App() {
     [input.vatRegistered, selectedTaxProfile]
   );
   const draftCalculation = useMemo(
-    () => safeCalculateBreakEven({ input: normalizedInput, taxProfile: currentTaxProfile }),
-    [currentTaxProfile, normalizedInput]
+    () => safeCalculateBreakEven(buildPayload()),
+    [currentTaxProfile, normalizedInput, periods, runName, timeModel]
   );
   const draftPricingScenarios = useMemo(
-    () => safeGeneratePricingScenarios({ input: normalizedInput, taxProfile: currentTaxProfile }),
-    [currentTaxProfile, normalizedInput]
+    () => safeGeneratePricingScenarios(buildPayload()),
+    [currentTaxProfile, normalizedInput, periods, runName, timeModel]
   );
   const draftSensitivity = useMemo(
-    () => safeGenerateSensitivity({ input: normalizedInput, taxProfile: currentTaxProfile }),
-    [currentTaxProfile, normalizedInput]
+    () => safeGenerateSensitivity(buildPayload()),
+    [currentTaxProfile, normalizedInput, periods, runName, timeModel]
   );
 
   useEffect(() => {
@@ -210,8 +234,8 @@ export default function App() {
   }, [saveNotice]);
 
   const previewIsStale = calculation
-    ? JSON.stringify(calculation.input) !==
-      JSON.stringify(normalizedInput)
+    ? calculationSignature(calculation) !==
+      calculationSignature(buildPayload())
     : true;
   const displayCalculation = previewIsStale
     ? draftCalculation
@@ -252,10 +276,35 @@ export default function App() {
   }
 
   function buildPayload(overrides = {}) {
+    const nextTimeModel = {
+      ...timeModel,
+      ...(overrides.timeModel || {})
+    };
+    const nextPeriods =
+      overrides.periods ??
+      periods.map((period) => normalizePeriodForPayload(period));
+    const nextInput = normalizedPreviewInput(
+      { ...input, ...(overrides.input || overrides) },
+      reference.vehicleClasses
+    );
+    const inputWithMode = {
+      ...nextInput,
+      calculationMode: nextTimeModel.calculationMode,
+      planYear: parseNullableNumber(nextTimeModel.planYear),
+      asOfDate: nextTimeModel.asOfDate || null
+    };
+
     return {
       runName,
-      input: normalizedPreviewInput({ ...input, ...overrides }, reference.vehicleClasses),
-      taxProfile: currentTaxProfile
+      scenarioName: runName,
+      calculationMode: nextTimeModel.calculationMode,
+      planYear: parseNullableNumber(nextTimeModel.planYear),
+      asOfDate: nextTimeModel.asOfDate || null,
+      scenarioStatus: nextTimeModel.scenarioStatus,
+      scenarioVersion: parseNullableNumber(nextTimeModel.scenarioVersion) || 1,
+      input: inputWithMode,
+      taxProfile: currentTaxProfile,
+      periods: nextPeriods
     };
   }
 
@@ -338,19 +387,36 @@ export default function App() {
         run.inputSnapshot || input,
         reference.vehicleClasses
       );
+      const openedTimeModel = {
+        ...defaultTimeModel(),
+        calculationMode: run.calculationMode || run.inputSnapshot?.calculationMode || "snapshot",
+        planYear:
+          run.planYear ??
+          run.inputSnapshot?.planYear ??
+          defaultTimeModel().planYear,
+        asOfDate:
+          run.asOfDate ||
+          run.inputSnapshot?.asOfDate ||
+          defaultTimeModel().asOfDate,
+        scenarioStatus: run.scenarioStatus || "draft",
+        scenarioVersion: run.scenarioVersion || 1
+      };
+      const openedPeriods = run.periods || [];
       const openedCalculation = calculateBreakEven({
         input: openedInput,
-        taxProfile: run.taxSnapshot
+        taxProfile: run.taxSnapshot,
+        calculationMode: openedTimeModel.calculationMode,
+        planYear: openedTimeModel.planYear,
+        asOfDate: openedTimeModel.asOfDate,
+        scenarioStatus: openedTimeModel.scenarioStatus,
+        scenarioVersion: openedTimeModel.scenarioVersion,
+        periods: openedPeriods
       });
       setInput(openedInput);
+      setTimeModel(openedTimeModel);
+      setPeriods(openedPeriods);
       setRunName(run.runName || "Opened run");
-      setCalculation({
-        input: openedInput,
-        taxProfile: run.taxSnapshot,
-        vehicleSnapshot: run.vehicleSnapshot,
-        result: openedCalculation.result,
-        formulas: openedCalculation.formulas
-      });
+      setCalculation(openedCalculation);
       setPricingScenarios(run.pricingScenarios || []);
       selectPage("results");
       setStatus(`Opened ${run.runName}`);
@@ -371,8 +437,17 @@ export default function App() {
 
   function duplicateRun(run) {
     setInput(normalizedPreviewInput(run.inputSnapshot || input, reference.vehicleClasses));
+    setTimeModel({
+      ...defaultTimeModel(),
+      calculationMode: run.calculationMode || run.inputSnapshot?.calculationMode || "snapshot",
+      planYear: run.planYear ?? run.inputSnapshot?.planYear ?? defaultTimeModel().planYear,
+      asOfDate: run.asOfDate || run.inputSnapshot?.asOfDate || defaultTimeModel().asOfDate,
+      scenarioStatus: "draft",
+      scenarioVersion: Number(run.scenarioVersion || 1) + 1
+    });
+    setPeriods(run.periods || []);
     setRunName(`${run.runName || "Run"} copy`);
-    selectPage("inputs");
+    selectPage("time");
     setStatus("Run duplicated locally. Calculate and save when ready.");
   }
 
@@ -547,6 +622,56 @@ export default function App() {
     setStatus("Vehicle group removed");
   }
 
+  function updateTimeModel(field, value) {
+    setTimeModel((current) => ({
+      ...current,
+      [field]:
+        field === "planYear" || field === "scenarioVersion"
+          ? parseNullableNumber(value)
+          : value
+    }));
+    setStatus("Unsaved time model changes");
+  }
+
+  function addPeriod() {
+    setPeriods((current) => [
+      ...current,
+      createBlankPeriod(timeModel.planYear, current.length)
+    ]);
+    setStatus("Period added");
+  }
+
+  function updatePeriod(index, field, value) {
+    setPeriods((current) =>
+      current.map((period, periodIndex) =>
+        periodIndex === index
+          ? {
+              ...period,
+              [field]: periodNumberField(field) ? parseNullableNumber(value) : value
+            }
+          : period
+      )
+    );
+    setStatus("Unsaved period changes");
+  }
+
+  function removePeriod(index) {
+    setPeriods((current) => current.filter((_, periodIndex) => periodIndex !== index));
+    setStatus("Period removed");
+  }
+
+  function generateMonthlyPlan() {
+    if (!result) return;
+    setPeriods(buildMonthlyPlanFromResult(result, timeModel.planYear));
+    setTimeModel((current) => ({
+      ...current,
+      calculationMode:
+        current.calculationMode === "snapshot" ? "planned_annual" : current.calculationMode
+    }));
+    selectPage("time");
+    setStatus("Monthly plan generated from current annual assumptions");
+  }
+
   const result = displayCalculation?.result;
 
   return (
@@ -608,10 +733,12 @@ export default function App() {
         {activePage === "dashboard" && (
           <DashboardPage
             fleetGroups={fleetGroups}
+            generateMonthlyPlan={generateMonthlyPlan}
             historyCount={history.length}
             input={input}
             onExportCsv={exportCurrentCsv}
             onPrintPdf={printCurrentScenario}
+            periods={periods}
             previewIsStale={previewIsStale}
             pricingScenarios={displayPricingScenarios}
             result={result}
@@ -620,6 +747,7 @@ export default function App() {
             selectedCountry={selectedCountry}
             selectedTaxProfile={selectedTaxProfile}
             setActivePage={selectPage}
+            timeModel={timeModel}
             vatRegistered={Boolean(input.vatRegistered)}
           />
         )}
@@ -657,6 +785,19 @@ export default function App() {
             updateVehicleGroup={updateVehicleGroup}
             updateInput={updateInput}
             vehicles={reference.vehicleClasses}
+          />
+        )}
+
+        {activePage === "time" && (
+          <TimeModelPage
+            addPeriod={addPeriod}
+            generateMonthlyPlan={generateMonthlyPlan}
+            periods={periods}
+            removePeriod={removePeriod}
+            result={result}
+            timeModel={timeModel}
+            updatePeriod={updatePeriod}
+            updateTimeModel={updateTimeModel}
           />
         )}
 
@@ -698,9 +839,11 @@ export default function App() {
 
 function DashboardPage({
   fleetGroups,
+  generateMonthlyPlan,
   historyCount,
   onExportCsv,
   onPrintPdf,
+  periods,
   previewIsStale,
   pricingScenarios,
   result,
@@ -709,6 +852,7 @@ function DashboardPage({
   selectedCountry,
   selectedTaxProfile,
   setActivePage,
+  timeModel,
   vatRegistered
 }) {
   const fleetStats = getFleetDraftStats(fleetGroups, result);
@@ -734,6 +878,9 @@ function DashboardPage({
           <button onClick={() => setActivePage("results")} type="button">
             Break-even
           </button>
+          <button onClick={() => setActivePage("time")} type="button">
+            Time Model
+          </button>
           <button onClick={onExportCsv} type="button">
             Export CSV
           </button>
@@ -742,6 +889,14 @@ function DashboardPage({
           </button>
         </div>
       </section>
+
+      <ModeStatusPanel
+        onGeneratePlan={generateMonthlyPlan}
+        onOpenTimeModel={() => setActivePage("time")}
+        periods={periods}
+        result={result}
+        timeModel={timeModel}
+      />
 
       {historyCount === 0 && (
         <FirstRunGuide
@@ -1082,6 +1237,256 @@ function TransportInputsPage({
   );
 }
 
+function ModeStatusPanel({
+  onGeneratePlan,
+  onOpenTimeModel,
+  periods = [],
+  result,
+  timeModel
+}) {
+  const mode = result?.calculationMode || timeModel?.calculationMode || "snapshot";
+  const warnings = result?.warnings || [];
+  const periodCount =
+    result?.periodAggregation?.sourcePeriodCount ?? periods.length ?? 0;
+
+  return (
+    <section className="mode-status-panel">
+      <div>
+        <span className="mode-badge">{calculationModeLabels[mode] || mode}</span>
+        <strong>{result?.modeLabel || calculationModeLabels[mode]}</strong>
+        <p>
+          {mode === "snapshot"
+            ? "Current values are treated as a full-year assumption."
+            : "Annual cost and loaded kilometres are built from selected period rows."}
+        </p>
+      </div>
+      <div className="mode-facts">
+        <Fact label="Plan year" value={result?.planYear || timeModel?.planYear || "n/a"} />
+        <Fact label="As of" value={result?.asOfDate || timeModel?.asOfDate || "n/a"} />
+        <Fact label="Periods" value={formatCount(periodCount)} />
+        <Fact label="Completeness" value={result?.dataCompletenessStatus || "fallback"} />
+      </div>
+      {warnings.length > 0 && (
+        <div className="mode-warnings">
+          {warnings.map((warning) => (
+            <span key={warning}>{friendlyWarning(warning)}</span>
+          ))}
+        </div>
+      )}
+      {(onOpenTimeModel || onGeneratePlan) && (
+        <div className="mode-actions">
+          {onOpenTimeModel && (
+            <button onClick={onOpenTimeModel} type="button">
+              Edit Time Model
+            </button>
+          )}
+          {onGeneratePlan && periodCount === 0 && (
+            <button onClick={onGeneratePlan} type="button">
+              Generate Monthly Plan
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TimeModelPage({
+  addPeriod,
+  generateMonthlyPlan,
+  periods,
+  removePeriod,
+  result,
+  timeModel,
+  updatePeriod,
+  updateTimeModel
+}) {
+  const warnings = result?.warnings || [];
+  const aggregation = result?.periodAggregation;
+
+  return (
+    <div className="page-stack">
+      <section className="time-model-hero">
+        <div>
+          <p className="eyebrow">Time-weighted layer</p>
+          <h2>{calculationModeLabels[timeModel.calculationMode]}</h2>
+          <div className="dashboard-meta">
+            <span>Plan year {timeModel.planYear || "n/a"}</span>
+            <span>As of {timeModel.asOfDate || "n/a"}</span>
+            <span>{periods.length} periods</span>
+            <span>{result?.dataCompletenessStatus || "fallback"}</span>
+          </div>
+        </div>
+        <div className="dashboard-actions">
+          <button onClick={generateMonthlyPlan} type="button">
+            Generate Monthly Plan
+          </button>
+          <button onClick={addPeriod} type="button">
+            Add Period
+          </button>
+        </div>
+      </section>
+
+      <section className="form-grid">
+        <Card title="Calculation Mode">
+          <SelectField
+            label="Break-even mode"
+            onChange={(value) => updateTimeModel("calculationMode", value)}
+            options={calculationModes.map((mode) => [
+              mode,
+              calculationModeLabels[mode]
+            ])}
+            value={timeModel.calculationMode}
+          />
+          <NumberField
+            field="planYear"
+            label="Plan year"
+            onChange={updateTimeModel}
+            unit="year"
+            value={timeModel.planYear}
+            integer
+          />
+          <DateField
+            label="As-of date"
+            onChange={(value) => updateTimeModel("asOfDate", value)}
+            value={timeModel.asOfDate}
+          />
+          <SelectField
+            label="Scenario status"
+            onChange={(value) => updateTimeModel("scenarioStatus", value)}
+            options={scenarioStatusOptions.map((status) => [status, titleCase(status)])}
+            value={timeModel.scenarioStatus}
+          />
+        </Card>
+
+        <Card title="Weighted Result">
+          <Fact label="Mode" value={result?.modeLabel || calculationModeLabels[timeModel.calculationMode]} />
+          <Fact label="Weighted cost" value={money(result?.totalAnnualCost)} />
+          <Fact label="Weighted loaded km" value={format(result?.loadedKmYear)} />
+          <Fact label="Weighted break-even" value={`${money(result?.breakEvenPerLoadedKm)} / loaded km`} />
+          <Fact label="Completeness" value={result?.dataCompletenessStatus || "fallback"} />
+        </Card>
+      </section>
+
+      {warnings.length > 0 && (
+        <section className="warning-panel">
+          {warnings.map((warning) => (
+            <span key={warning}>{friendlyWarning(warning)}</span>
+          ))}
+        </section>
+      )}
+
+      <Card title="Period Data">
+        {periods.length === 0 ? (
+          <div className="empty-periods">
+            <p>
+              No period rows yet. Snapshot still uses the annual model. Generate a
+              monthly plan to switch into time-weighted planned or rolling logic.
+            </p>
+            <button className="primary-button" onClick={generateMonthlyPlan} type="button">
+              Generate Monthly Plan
+            </button>
+          </div>
+        ) : (
+          <div className="period-table">
+            <div className="period-table-head">
+              <span>Period</span>
+              <span>Status</span>
+              <span>Total km</span>
+              <span>Loaded km</span>
+              <span>Cost buckets</span>
+              <span>Revenue</span>
+              <span />
+            </div>
+            {periods.map((period, index) => (
+              <article className="period-row" key={period.id || index}>
+                <div className="period-dates">
+                  <DateField
+                    label="Start"
+                    onChange={(value) => updatePeriod(index, "periodStart", value)}
+                    value={period.periodStart}
+                  />
+                  <DateField
+                    label="End"
+                    onChange={(value) => updatePeriod(index, "periodEnd", value)}
+                    value={period.periodEnd}
+                  />
+                </div>
+                <SelectField
+                  label="Status"
+                  onChange={(value) => updatePeriod(index, "dataStatus", value)}
+                  options={["planned", "actual", "forecast"].map((status) => [
+                    status,
+                    titleCase(status)
+                  ])}
+                  value={period.dataStatus}
+                />
+                <NumberField
+                  field="totalKm"
+                  label="Total km"
+                  onChange={(field, value) => updatePeriod(index, field, value)}
+                  unit="km"
+                  value={period.totalKm}
+                />
+                <NumberField
+                  field="loadedKm"
+                  label="Loaded km"
+                  onChange={(field, value) => updatePeriod(index, field, value)}
+                  unit="km"
+                  value={period.loadedKm}
+                />
+                <div className="period-cost-grid">
+                  {periodCostFields.map(([field, label]) => (
+                    <NumberField
+                      field={field}
+                      key={field}
+                      label={label}
+                      onChange={(fieldName, value) =>
+                        updatePeriod(index, fieldName, value)
+                      }
+                      unit={currencyCode()}
+                      value={period[field]}
+                    />
+                  ))}
+                </div>
+                <NumberField
+                  field="revenueExclVat"
+                  label="Revenue excl. VAT"
+                  onChange={(field, value) => updatePeriod(index, field, value)}
+                  unit={currencyCode()}
+                  value={period.revenueExclVat}
+                />
+                <button
+                  className="danger-link"
+                  onClick={() => removePeriod(index)}
+                  type="button"
+                >
+                  Remove
+                </button>
+              </article>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {aggregation?.periodBreakdown?.length > 0 && (
+        <Card title="Selected Periods Used In Result">
+          <DataTable
+            columns={["Period", "Status", "Loaded km", "Cost", "Break-even"]}
+            rows={aggregation.periodBreakdown.map((period) => [
+              `${period.periodStart || "n/a"} to ${period.periodEnd || "n/a"}`,
+              titleCase(period.dataStatus),
+              format(period.loadedKm),
+              money(period.periodTotalCost),
+              money(period.breakEvenPerLoadedKm)
+            ])}
+          />
+        </Card>
+      )}
+    </div>
+  );
+}
+
 function BreakEvenResultsPage({ calculation }) {
   const result = calculation?.result;
 
@@ -1089,6 +1494,8 @@ function BreakEvenResultsPage({ calculation }) {
 
   return (
     <div className="page-stack">
+      <ModeStatusPanel result={result} />
+
       <section className="summary-grid">
         <Kpi label="Total annual cost" value={money(result.totalAnnualCost)} unit={currencyUnit("year")} />
         <Kpi label="Break-even loaded km" value={money(result.breakEvenPerLoadedKm)} unit={`${currencyCode()}/km`} />
@@ -1227,9 +1634,9 @@ function SensitivityPage({ sensitivity }) {
     sensitivity?.fuelPriceSensitivity?.[Math.floor((sensitivity?.fuelPriceSensitivity?.length || 1) / 2)]
       ?.fuelPricePerLiter || 1.55
   );
-  const [selectedLoadFactor, setSelectedLoadFactor] = useState(
-    sensitivity?.loadFactorSensitivity?.[Math.floor((sensitivity?.loadFactorSensitivity?.length || 1) / 2)]
-      ?.loadFactor || 0.85
+  const [selectedPayloadUtilisation, setSelectedPayloadUtilisation] = useState(
+    sensitivity?.payloadUtilisationSensitivity?.[Math.floor((sensitivity?.payloadUtilisationSensitivity?.length || 1) / 2)]
+      ?.payloadUtilisation || 0.8
   );
   if (!sensitivity) return <EmptyState title="No sensitivity yet" text="Calculate a preview first." />;
   const fuelPoint = nearestSensitivityPoint(
@@ -1237,67 +1644,75 @@ function SensitivityPage({ sensitivity }) {
     "fuelPricePerLiter",
     selectedFuelPrice
   );
-  const loadPoint = nearestSensitivityPoint(
-    sensitivity.loadFactorSensitivity,
-    "loadFactor",
-    selectedLoadFactor
+  const payloadPoint = nearestSensitivityPoint(
+    sensitivity.payloadUtilisationSensitivity,
+    "payloadUtilisation",
+    selectedPayloadUtilisation
   );
+  const vehicleLowest = minBy(sensitivity.vehicleClassSensitivity, "breakEvenPerLoadedKm");
+  const vehicleHighest = maxBy(sensitivity.vehicleClassSensitivity, "breakEvenPerLoadedKm");
 
   return (
     <div className="page-stack">
-      <section className="form-grid">
-        <Card title="Fuel Price Drag Test">
-          <SensitivitySlider
-            max={maxBy(sensitivity.fuelPriceSensitivity, "fuelPricePerLiter")}
-            min={minBy(sensitivity.fuelPriceSensitivity, "fuelPricePerLiter")}
-            onChange={setSelectedFuelPrice}
-            step="0.01"
-            value={selectedFuelPrice}
-            valueLabel={money(selectedFuelPrice, 2)}
-          />
-          <Fact label="Nearest break-even" value={money(fuelPoint?.breakEvenPerLoadedKm)} />
-          <Fact label="Variable cost/km" value={money(fuelPoint?.variableCostPerKm)} />
-          <SensitivityBars
-            labelFormatter={(row) => money(row.fuelPricePerLiter)}
-            rows={sensitivity.fuelPriceSensitivity}
-            valueField="breakEvenPerLoadedKm"
-          />
-        </Card>
-
-        <Card title="Load Factor Drag Test">
-          <SensitivitySlider
-            max={maxBy(sensitivity.loadFactorSensitivity, "loadFactor")}
-            min={minBy(sensitivity.loadFactorSensitivity, "loadFactor")}
-            onChange={setSelectedLoadFactor}
-            step="0.01"
-            value={selectedLoadFactor}
-            valueLabel={percent(selectedLoadFactor)}
-          />
-          <Fact label="Nearest break-even" value={money(loadPoint?.breakEvenPerLoadedKm)} />
-          <Fact label="Profit after tax" value={money(loadPoint?.profitAfterTax)} />
-          <SensitivityBars
-            labelFormatter={(row) => percent(row.loadFactor)}
-            rows={sensitivity.loadFactorSensitivity}
-            valueField="breakEvenPerLoadedKm"
-          />
-        </Card>
+      <section className="sensitivity-lab-intro">
+        <div>
+          <p className="eyebrow">Sensitivity lab</p>
+          <h2>Hover a card to inspect the moving parts</h2>
+          <p>
+            Each card stays compact until you need the detail. Move the mouse away and it closes back, keeping the page scannable.
+          </p>
+        </div>
       </section>
 
-      <Card title="Vehicle Class Sensitivity">
-        <DataTable
-          columns={["Vehicle", "Payload", `${currencyCode()}/loaded km`, `${currencyCode()}/tonne-km`, "Annual tonne-km"]}
-          rows={sensitivity.vehicleClassSensitivity.map((row) => [
-            row.vehicleClassName,
-            `${format(row.payloadCapacityTons)} t`,
-            money(row.breakEvenPerLoadedKm),
-            money(row.breakEvenPerTonneKm),
-            format(row.annualTonneKm)
-          ])}
-        />
-      </Card>
+      <section className="sensitivity-stack">
+        <HoverSensitivityCard
+          kicker="Vehicle mix"
+          metric={`${money(vehicleLowest)} - ${money(vehicleHighest)}`}
+          metricLabel={`${currencyCode()}/loaded km range`}
+          summary="Compare how the same work profile behaves across vehicle classes and payload bands."
+          title="Vehicle Class Sensitivity"
+        >
+          <SensitivityBars
+            labelFormatter={(row) => row.vehicleClassName}
+            rows={sensitivity.vehicleClassSensitivity}
+            valueField="breakEvenPerLoadedKm"
+          />
+          <DataTable
+            columns={["Vehicle", "Payload", `${currencyCode()}/loaded km`, `${currencyCode()}/tonne-km`, "Annual tonne-km"]}
+            rows={sensitivity.vehicleClassSensitivity.map((row) => [
+              row.vehicleClassName,
+              `${format(row.payloadCapacityTons)} t`,
+              money(row.breakEvenPerLoadedKm),
+              money(row.breakEvenPerTonneKm),
+              format(row.annualTonneKm)
+            ])}
+          />
+        </HoverSensitivityCard>
 
-      <section className="two-column">
-        <Card title="Payload Utilisation">
+        <HoverSensitivityCard
+          kicker="Payload"
+          metric={money(payloadPoint?.breakEvenPerTonneKm)}
+          metricLabel={`${currencyCode()}/tonne-km at ${percent(selectedPayloadUtilisation)}`}
+          summary="Drag payload utilisation to see how tonne-km economics change as capacity fills or empties."
+          title="Payload Utilisation"
+        >
+          <SensitivitySlider
+            max={maxBy(sensitivity.payloadUtilisationSensitivity, "payloadUtilisation")}
+            min={minBy(sensitivity.payloadUtilisationSensitivity, "payloadUtilisation")}
+            onChange={setSelectedPayloadUtilisation}
+            step="0.01"
+            value={selectedPayloadUtilisation}
+            valueLabel={percent(selectedPayloadUtilisation)}
+          />
+          <div className="sensitivity-facts">
+            <Fact label="Nearest tonne-km break-even" value={money(payloadPoint?.breakEvenPerTonneKm)} />
+            <Fact label="Annual tonne-km" value={format(payloadPoint?.annualTonneKm)} />
+          </div>
+          <SensitivityBars
+            labelFormatter={(row) => percent(row.payloadUtilisation)}
+            rows={sensitivity.payloadUtilisationSensitivity}
+            valueField="breakEvenPerTonneKm"
+          />
           <DataTable
             columns={["Utilisation", `${currencyCode()}/tonne-km`, "Annual tonne-km"]}
             rows={sensitivity.payloadUtilisationSensitivity.map((row) => [
@@ -1306,9 +1721,32 @@ function SensitivityPage({ sensitivity }) {
               format(row.annualTonneKm)
             ])}
           />
-        </Card>
+        </HoverSensitivityCard>
 
-        <Card title="Fuel Price">
+        <HoverSensitivityCard
+          kicker="Fuel"
+          metric={money(fuelPoint?.breakEvenPerLoadedKm)}
+          metricLabel={`${currencyCode()}/loaded km at ${money(selectedFuelPrice, 2)}/l`}
+          summary="Drag fuel price to inspect how variable cost and break-even move together."
+          title="Fuel Price"
+        >
+          <SensitivitySlider
+            max={maxBy(sensitivity.fuelPriceSensitivity, "fuelPricePerLiter")}
+            min={minBy(sensitivity.fuelPriceSensitivity, "fuelPricePerLiter")}
+            onChange={setSelectedFuelPrice}
+            step="0.01"
+            value={selectedFuelPrice}
+            valueLabel={money(selectedFuelPrice, 2)}
+          />
+          <div className="sensitivity-facts">
+            <Fact label="Nearest break-even" value={money(fuelPoint?.breakEvenPerLoadedKm)} />
+            <Fact label="Variable cost/km" value={money(fuelPoint?.variableCostPerKm)} />
+          </div>
+          <SensitivityBars
+            labelFormatter={(row) => money(row.fuelPricePerLiter, 2)}
+            rows={sensitivity.fuelPriceSensitivity}
+            valueField="breakEvenPerLoadedKm"
+          />
           <DataTable
             columns={["Fuel price", "Variable cost/km", "Total cost", "Break-even"]}
             rows={sensitivity.fuelPriceSensitivity.map((row) => [
@@ -1318,7 +1756,7 @@ function SensitivityPage({ sensitivity }) {
               money(row.breakEvenPerLoadedKm)
             ])}
           />
-        </Card>
+        </HoverSensitivityCard>
       </section>
     </div>
   );
@@ -1391,6 +1829,9 @@ function HistoryPage({
                   <strong>{run.runName}</strong>
                   <span>
                     {run.country} | {run.companyType} | {dateTime(run.createdAt)}
+                  </span>
+                  <span>
+                    {calculationModeLabels[run.calculationMode] || "Snapshot"} | {run.planYear || "n/a"} | {titleCase(run.scenarioStatus || "draft")}
                   </span>
                 </div>
                 <div className="history-metrics">
@@ -1497,6 +1938,36 @@ function PricingScenarioTable({ onPin, pinnedMarkups, rows, selectedMarkup }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function HoverSensitivityCard({
+  children,
+  kicker,
+  metric,
+  metricLabel,
+  summary,
+  title
+}) {
+  return (
+    <section
+      aria-label={title}
+      className="hover-sensitivity-card"
+      tabIndex={0}
+    >
+      <div className="hover-sensitivity-summary">
+        <div>
+          <span>{kicker}</span>
+          <h2>{title}</h2>
+          <p>{summary}</p>
+        </div>
+        <div className="hover-sensitivity-metric">
+          <strong>{metric}</strong>
+          <small>{metricLabel}</small>
+        </div>
+      </div>
+      <div className="hover-sensitivity-body">{children}</div>
+    </section>
   );
 }
 
@@ -1784,6 +2255,19 @@ function TextField({ label, onChange, value }) {
     <label className="text-field">
       <span>{label}</span>
       <input onChange={(event) => onChange(event.target.value)} value={value ?? ""} />
+    </label>
+  );
+}
+
+function DateField({ label, onChange, value }) {
+  return (
+    <label className="text-field">
+      <span>{label}</span>
+      <input
+        onChange={(event) => onChange(event.target.value)}
+        type="date"
+        value={value ?? ""}
+      />
     </label>
   );
 }
@@ -2124,6 +2608,150 @@ function safeGenerateSensitivity(payload) {
   } catch {
     return null;
   }
+}
+
+function defaultTimeModel() {
+  return {
+    calculationMode: "snapshot",
+    planYear: new Date().getFullYear(),
+    asOfDate: todayIso(),
+    scenarioStatus: "draft",
+    scenarioVersion: 1
+  };
+}
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function calculationSignature(payloadOrCalculation) {
+  return JSON.stringify({
+    input: payloadOrCalculation.input,
+    calculationMode: payloadOrCalculation.calculationMode,
+    planYear: payloadOrCalculation.planYear,
+    asOfDate: payloadOrCalculation.asOfDate,
+    scenarioStatus: payloadOrCalculation.scenarioStatus,
+    scenarioVersion: payloadOrCalculation.scenarioVersion,
+    periods: payloadOrCalculation.periods || []
+  });
+}
+
+function normalizePeriodForPayload(period) {
+  return {
+    ...period,
+    periodType: period.periodType || "month",
+    dataStatus: period.dataStatus || "planned",
+    totalKm: parseNullableNumber(period.totalKm),
+    loadedKm: parseNullableNumber(period.loadedKm),
+    loadFactor: parseNullableNumber(period.loadFactor),
+    fuelCost: parseNullableNumber(period.fuelCost),
+    tyresCost: parseNullableNumber(period.tyresCost),
+    maintenanceCost: parseNullableNumber(period.maintenanceCost),
+    roadFeesCost: parseNullableNumber(period.roadFeesCost),
+    driverCost: parseNullableNumber(period.driverCost),
+    fixedVehicleCost: parseNullableNumber(period.fixedVehicleCost),
+    structuralOverheadCost: parseNullableNumber(period.structuralOverheadCost),
+    otherCost: parseNullableNumber(period.otherCost),
+    revenueExclVat: parseNullableNumber(period.revenueExclVat)
+  };
+}
+
+function periodNumberField(field) {
+  return [
+    "totalKm",
+    "loadedKm",
+    "loadFactor",
+    "fuelCost",
+    "tyresCost",
+    "maintenanceCost",
+    "roadFeesCost",
+    "driverCost",
+    "fixedVehicleCost",
+    "structuralOverheadCost",
+    "otherCost",
+    "revenueExclVat"
+  ].includes(field);
+}
+
+function parseNullableNumber(value) {
+  if (value === "" || value == null) return "";
+  const number = Number(value);
+  return Number.isFinite(number) ? number : "";
+}
+
+function createBlankPeriod(year, index) {
+  const monthIndex = index % 12;
+  return {
+    id: `period-${Date.now()}-${index}`,
+    periodStart: monthStart(year || new Date().getFullYear(), monthIndex),
+    periodEnd: monthEnd(year || new Date().getFullYear(), monthIndex),
+    periodType: "month",
+    dataStatus: "planned",
+    totalKm: "",
+    loadedKm: "",
+    fuelCost: "",
+    tyresCost: "",
+    maintenanceCost: "",
+    roadFeesCost: "",
+    driverCost: "",
+    fixedVehicleCost: "",
+    structuralOverheadCost: "",
+    otherCost: "",
+    revenueExclVat: ""
+  };
+}
+
+function buildMonthlyPlanFromResult(result, year) {
+  const planYear = Number(year) || new Date().getFullYear();
+  return Array.from({ length: 12 }, (_, index) => {
+    const totalKm = safeRatio(result.annualTotalKm, 12);
+    const loadedKm = safeRatio(result.loadedKmYear, 12);
+    return {
+      id: `planned-${planYear}-${String(index + 1).padStart(2, "0")}`,
+      periodStart: monthStart(planYear, index),
+      periodEnd: monthEnd(planYear, index),
+      periodType: "month",
+      dataStatus: "planned",
+      totalKm,
+      loadedKm,
+      fuelCost: (result.fuelCostPerKm || 0) * totalKm,
+      tyresCost: (result.tyresCostPerKm || 0) * totalKm,
+      maintenanceCost: (result.maintenanceCostPerKm || 0) * totalKm,
+      roadFeesCost: (result.roadFeesCostPerKm || 0) * totalKm,
+      driverCost: safeRatio(result.driverAnnualCost, 12),
+      fixedVehicleCost: safeRatio(result.vehicleFixedAnnualCost, 12),
+      structuralOverheadCost: safeRatio(result.structuralIndirectCostsAnnual, 12),
+      otherCost: safeRatio(result.otherAnnualCost, 12),
+      revenueExclVat: safeRatio(result.annualRevenueExclVat, 12)
+    };
+  });
+}
+
+function monthStart(year, monthIndex) {
+  return `${year}-${String(monthIndex + 1).padStart(2, "0")}-01`;
+}
+
+function monthEnd(year, monthIndex) {
+  return new Date(Date.UTC(year, monthIndex + 1, 0)).toISOString().slice(0, 10);
+}
+
+function friendlyWarning(code) {
+  const labels = {
+    SNAPSHOT_ASSUMPTION_FULL_YEAR: "Snapshot assumes current values apply to the full year",
+    MISSING_ACTUAL_PERIODS: "Some completed periods use planned data",
+    MISSING_FORECAST_PERIODS: "Some future periods use planned data",
+    ACTUAL_YEAR_INCOMPLETE: "Actual annual mode is missing actual periods",
+    LOW_LOADED_KM: "Loaded kilometres are low or zero",
+    LOW_LOAD_FACTOR: "Load factor is unusually low",
+    PERIOD_DATA_INCOMPLETE: "Some period data is incomplete"
+  };
+  return labels[code] || titleCase(String(code).replaceAll("_", " "));
+}
+
+function titleCase(value) {
+  return String(value || "")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 async function apiRequest(path, options = {}) {

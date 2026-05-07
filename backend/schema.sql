@@ -90,7 +90,69 @@ ALTER TABLE calculation_runs
   ADD COLUMN IF NOT EXISTS input_snapshot JSONB,
   ADD COLUMN IF NOT EXISTS tax_snapshot JSONB,
   ADD COLUMN IF NOT EXISTS vehicle_snapshot JSONB,
-  ADD COLUMN IF NOT EXISTS created_by TEXT;
+  ADD COLUMN IF NOT EXISTS created_by TEXT,
+  ADD COLUMN IF NOT EXISTS calculation_mode TEXT DEFAULT 'snapshot',
+  ADD COLUMN IF NOT EXISTS plan_year INTEGER,
+  ADD COLUMN IF NOT EXISTS as_of_date DATE,
+  ADD COLUMN IF NOT EXISTS scenario_status TEXT DEFAULT 'draft',
+  ADD COLUMN IF NOT EXISTS engine_version TEXT,
+  ADD COLUMN IF NOT EXISTS scenario_name TEXT,
+  ADD COLUMN IF NOT EXISTS scenario_version INTEGER DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS approved_by TEXT;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'calculation_runs_calculation_mode_check'
+  ) THEN
+    ALTER TABLE calculation_runs
+      ADD CONSTRAINT calculation_runs_calculation_mode_check
+      CHECK (calculation_mode IN ('snapshot', 'planned_annual', 'rolling_forecast', 'actual_annual')) NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'calculation_runs_scenario_status_check'
+  ) THEN
+    ALTER TABLE calculation_runs
+      ADD CONSTRAINT calculation_runs_scenario_status_check
+      CHECK (scenario_status IN ('draft', 'reviewed', 'approved', 'archived')) NOT VALID;
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS scenario_periods (
+  id BIGSERIAL PRIMARY KEY,
+  calculation_run_id BIGINT NOT NULL REFERENCES calculation_runs(id) ON DELETE CASCADE,
+  period_start DATE,
+  period_end DATE,
+  period_type TEXT NOT NULL DEFAULT 'month',
+  data_status TEXT NOT NULL DEFAULT 'planned',
+  total_km NUMERIC,
+  loaded_km NUMERIC,
+  load_factor NUMERIC,
+  fuel_price_per_liter NUMERIC,
+  fuel_consumption_l_per_100km NUMERIC,
+  fuel_cost NUMERIC,
+  tyres_cost NUMERIC,
+  maintenance_cost NUMERIC,
+  road_fees_cost NUMERIC,
+  driver_cost NUMERIC,
+  fixed_vehicle_cost NUMERIC,
+  structural_overhead_cost NUMERIC,
+  other_cost NUMERIC,
+  revenue_excl_vat NUMERIC,
+  notes TEXT,
+  raw_period JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  CHECK (period_type IN ('month', 'week', 'custom')),
+  CHECK (data_status IN ('planned', 'actual', 'forecast')),
+  CHECK (period_start IS NULL OR period_end IS NULL OR period_start <= period_end)
+);
 
 CREATE TABLE IF NOT EXISTS calculation_results (
   id BIGSERIAL PRIMARY KEY,

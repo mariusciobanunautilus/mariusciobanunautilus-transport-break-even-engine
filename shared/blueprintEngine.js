@@ -8,6 +8,22 @@ import {
 export const blueprintPricingMarkups = [0, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4];
 export const blueprintPayloadUtilisations = [0.5, 0.6, 0.7, 0.8, 0.9, 1];
 export const blueprintLoadFactors = [0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95];
+export const calculationModes = [
+  "snapshot",
+  "planned_annual",
+  "rolling_forecast",
+  "actual_annual"
+];
+export const periodWarningCodes = {
+  SNAPSHOT_ASSUMPTION_FULL_YEAR: "SNAPSHOT_ASSUMPTION_FULL_YEAR",
+  MISSING_ACTUAL_PERIODS: "MISSING_ACTUAL_PERIODS",
+  MISSING_FORECAST_PERIODS: "MISSING_FORECAST_PERIODS",
+  ACTUAL_YEAR_INCOMPLETE: "ACTUAL_YEAR_INCOMPLETE",
+  LOW_LOADED_KM: "LOW_LOADED_KM",
+  LOW_LOAD_FACTOR: "LOW_LOAD_FACTOR",
+  PERIOD_DATA_INCOMPLETE: "PERIOD_DATA_INCOMPLETE"
+};
+export const currentEngineVersion = "time-weighted-v1";
 
 export const defaultBlueprintCalculationInput = {
   countryId: 3,
@@ -230,17 +246,47 @@ export function getTaxProfile(query = {}) {
 }
 
 export function calculateBreakEven(payload = {}) {
+  const rawPeriods = getPayloadPeriods(payload);
+  const calculationMode = normalizeCalculationMode(
+    payload.calculationMode ??
+      payload.calculation_mode ??
+      (rawPeriods.length > 0 ? "planned_annual" : "snapshot")
+  );
+  const planYear = normalizePlanYear(payload.planYear ?? payload.plan_year);
+  const asOfDate = normalizeAsOfDate(payload.asOfDate ?? payload.as_of_date);
   const input = normalizeCalculationInput(payload);
   const taxProfile = resolveTaxProfile(payload, input);
   const vehicleGroups = normalizeVehicleGroups(payload, input, taxProfile);
   const vehicleGroupResults = vehicleGroups.map((groupInput, index) =>
     calculateVehicleGroup(groupInput, taxProfile, index)
   );
-  const result = aggregateFleetResult(input, vehicleGroupResults);
+  const snapshotResult = aggregateFleetResult(input, vehicleGroupResults);
+  const periodAggregation = aggregatePeriodsForAnnualBreakEven({
+    periods: rawPeriods,
+    calculationMode,
+    asOfDate,
+    planYear,
+    annualFallbackInputs: input
+  });
+  const result =
+    calculationMode === "snapshot" || rawPeriods.length === 0
+      ? annotateSnapshotResult(snapshotResult, {
+          calculationMode,
+          planYear,
+          asOfDate,
+          periodAggregation
+        })
+      : applyPeriodAggregationToResult(snapshotResult, periodAggregation, {
+          input,
+          taxProfile
+        });
   const normalizedInput = {
     ...input,
     numberOfTrucks: result.companyTotals.numberOfTrucks,
-    vehicleGroups: vehicleGroups.map(toVehicleGroupInput)
+    vehicleGroups: vehicleGroups.map(toVehicleGroupInput),
+    calculationMode,
+    planYear,
+    asOfDate
   };
 
   return {
@@ -248,8 +294,546 @@ export function calculateBreakEven(payload = {}) {
     taxProfile,
     vehicleSnapshot: buildVehicleSnapshot(vehicleGroupResults),
     result,
+    calculationMode,
+    planYear,
+    asOfDate,
+    scenarioStatus: normalizeScenarioStatus(
+      payload.scenarioStatus ?? payload.scenario_status
+    ),
+    scenarioName: payload.scenarioName ?? payload.scenario_name ?? payload.runName,
+    scenarioVersion: normalizeScenarioVersion(
+      payload.scenarioVersion ?? payload.scenario_version
+    ),
+    engineVersion: currentEngineVersion,
+    periods: rawPeriods,
+    periodAggregation,
+    dataCompletenessStatus: result.dataCompletenessStatus,
+    warnings: result.warnings,
     formulas: blueprintFormulaDefinitions()
   };
+}
+
+export function aggregatePeriodsForAnnualBreakEven({
+  periods = [],
+  calculationMode = "planned_annual",
+  asOfDate,
+  planYear,
+  annualFallbackInputs = {}
+} = {}) {
+  const mode = normalizeCalculationMode(calculationMode);
+  const normalizedAsOfDate = normalizeAsOfDate(asOfDate);
+  const year = normalizePlanYear(planYear);
+  const warnings = [];
+  const warningDetails = [];
+  const normalizedPeriods = normalizeScenarioPeriods(periods, annualFallbackInputs);
+
+  if (mode === "snapshot") {
+    addWarning(warnings, periodWarningCodes.SNAPSHOT_ASSUMPTION_FULL_YEAR);
+  }
+
+  const selectedPeriods = selectModePeriods({
+    periods: normalizedPeriods,
+    calculationMode: mode,
+    asOfDate: normalizedAsOfDate,
+    warnings,
+    warningDetails
+  });
+
+  const totals = selectedPeriods.reduce(
+    (sum, period) => ({
+      annualTotalKm: sum.annualTotalKm + period.totalKm,
+      loadedRevenueKm: sum.loadedRevenueKm + period.loadedKm,
+      emptyKm: sum.emptyKm + period.emptyKm,
+      annualFuelCost: sum.annualFuelCost + period.fuelCost,
+      annualTyresCost: sum.annualTyresCost + period.tyresCost,
+      annualMaintenanceCost: sum.annualMaintenanceCost + period.maintenanceCost,
+      annualRoadFeesCost: sum.annualRoadFeesCost + period.roadFeesCost,
+      annualVariableOperatingCost:
+        sum.annualVariableOperatingCost + period.variableCost,
+      annualDriverCost: sum.annualDriverCost + period.driverCost,
+      annualVehicleFixedCost:
+        sum.annualVehicleFixedCost + period.fixedVehicleCost,
+      annualStructuralOverheadCost:
+        sum.annualStructuralOverheadCost + period.structuralOverheadCost,
+      annualOtherCost: sum.annualOtherCost + period.otherCost,
+      annualRevenueExclVat: sum.annualRevenueExclVat + period.revenueExclVat,
+      totalAnnualCost: sum.totalAnnualCost + period.periodTotalCost
+    }),
+    {
+      annualTotalKm: 0,
+      loadedRevenueKm: 0,
+      emptyKm: 0,
+      annualFuelCost: 0,
+      annualTyresCost: 0,
+      annualMaintenanceCost: 0,
+      annualRoadFeesCost: 0,
+      annualVariableOperatingCost: 0,
+      annualDriverCost: 0,
+      annualVehicleFixedCost: 0,
+      annualStructuralOverheadCost: 0,
+      annualOtherCost: 0,
+      annualRevenueExclVat: 0,
+      totalAnnualCost: 0
+    }
+  );
+
+  if (selectedPeriods.length > 0 && totals.loadedRevenueKm <= 0) {
+    addWarning(warnings, periodWarningCodes.LOW_LOADED_KM);
+  }
+  const loadFactor = safeDivide(totals.loadedRevenueKm, totals.annualTotalKm);
+  if (selectedPeriods.length > 0 && loadFactor > 0 && loadFactor < 0.6) {
+    addWarning(warnings, periodWarningCodes.LOW_LOAD_FACTOR);
+  }
+
+  return {
+    calculationMode: mode,
+    planYear: year,
+    asOfDate: normalizedAsOfDate,
+    periodCount: selectedPeriods.length,
+    sourcePeriodCount: normalizedPeriods.length,
+    annualTotalKm: totals.annualTotalKm,
+    loadedRevenueKm: totals.loadedRevenueKm,
+    loadedKmYear: totals.loadedRevenueKm,
+    emptyKm: totals.emptyKm,
+    loadFactor,
+    annualFuelCost: totals.annualFuelCost,
+    annualTyresCost: totals.annualTyresCost,
+    annualMaintenanceCost: totals.annualMaintenanceCost,
+    annualRoadFeesCost: totals.annualRoadFeesCost,
+    annualVariableOperatingCost: totals.annualVariableOperatingCost,
+    annualDriverCost: totals.annualDriverCost,
+    annualVehicleFixedCost: totals.annualVehicleFixedCost,
+    annualStructuralOverheadCost: totals.annualStructuralOverheadCost,
+    annualOtherCost: totals.annualOtherCost,
+    annualRevenueExclVat: totals.annualRevenueExclVat,
+    totalAnnualCost: totals.totalAnnualCost,
+    breakEvenPerLoadedKm: safeDivide(
+      totals.totalAnnualCost,
+      totals.loadedRevenueKm
+    ),
+    costPerTotalKm: safeDivide(totals.totalAnnualCost, totals.annualTotalKm),
+    actualCustomerRateExclVat: safeDivide(
+      totals.annualRevenueExclVat,
+      totals.loadedRevenueKm
+    ),
+    periodBreakdown: selectedPeriods,
+    dataCompletenessStatus: resolveDataCompletenessStatus({
+      calculationMode: mode,
+      selectedPeriods,
+      sourcePeriods: normalizedPeriods,
+      warnings
+    }),
+    warnings,
+    warningDetails
+  };
+}
+
+function annotateSnapshotResult(result, {
+  calculationMode,
+  planYear,
+  asOfDate,
+  periodAggregation
+}) {
+  const warnings = [
+    ...(periodAggregation?.warnings ?? [])
+  ];
+  const dataCompletenessStatus =
+    periodAggregation?.dataCompletenessStatus ?? "complete";
+
+  return {
+    ...result,
+    calculationMode,
+    planYear,
+    asOfDate,
+    modeLabel: calculationModeLabel(calculationMode),
+    dataCompletenessStatus,
+    warnings,
+    periodAggregation
+  };
+}
+
+function applyPeriodAggregationToResult(baseResult, periodAggregation, {
+  input,
+  taxProfile
+}) {
+  const effectivePayloadTons =
+    baseResult.effectivePayloadTons ||
+    input.payloadCapacityTons * input.payloadUtilisation;
+  const annualTonneKm =
+    periodAggregation.loadedRevenueKm * effectivePayloadTons;
+  const breakEvenPerLoadedKm = safeDivide(
+    periodAggregation.totalAnnualCost,
+    periodAggregation.loadedRevenueKm
+  );
+  const breakEvenPerTonneKm = safeDivide(
+    periodAggregation.totalAnnualCost,
+    annualTonneKm
+  );
+  const customerRateExclVat =
+    breakEvenPerLoadedKm * (1 + input.markupPercentage);
+  const vatRate = taxProfile.vatRegistered ? taxProfile.vatRate : 0;
+  const customerRateInclVat = customerRateExclVat * (1 + vatRate);
+  const annualRevenueExclVat =
+    customerRateExclVat * periodAggregation.loadedRevenueKm;
+  const vatCollected = annualRevenueExclVat * vatRate;
+  const invoiceValueInclVat = annualRevenueExclVat + vatCollected;
+  const ebitBeforeTax = annualRevenueExclVat - periodAggregation.totalAnnualCost;
+  const businessTax =
+    Math.max(0, ebitBeforeTax) * taxProfile.effectiveBusinessTaxRate;
+  const profitAfterTax = ebitBeforeTax - businessTax;
+  const actualEbitBeforeTax =
+    periodAggregation.annualRevenueExclVat > 0
+      ? periodAggregation.annualRevenueExclVat - periodAggregation.totalAnnualCost
+      : null;
+  const actualBusinessTax =
+    actualEbitBeforeTax == null
+      ? null
+      : Math.max(0, actualEbitBeforeTax) * taxProfile.effectiveBusinessTaxRate;
+  const actualProfitAfterTax =
+    actualEbitBeforeTax == null ? null : actualEbitBeforeTax - actualBusinessTax;
+
+  const result = {
+    ...baseResult,
+    calculationMode: periodAggregation.calculationMode,
+    planYear: periodAggregation.planYear,
+    asOfDate: periodAggregation.asOfDate,
+    modeLabel: calculationModeLabel(periodAggregation.calculationMode),
+    annualTotalKm: periodAggregation.annualTotalKm,
+    loadedKmYear: periodAggregation.loadedRevenueKm,
+    loadedRevenueKm: periodAggregation.loadedRevenueKm,
+    emptyKm: periodAggregation.emptyKm,
+    loadFactor: periodAggregation.loadFactor,
+    effectivePayloadTons,
+    annualTonneKm,
+    fuelCostPerKm: safeDivide(
+      periodAggregation.annualFuelCost,
+      periodAggregation.annualTotalKm
+    ),
+    tyresCostPerKm: safeDivide(
+      periodAggregation.annualTyresCost,
+      periodAggregation.annualTotalKm
+    ),
+    maintenanceCostPerKm: safeDivide(
+      periodAggregation.annualMaintenanceCost,
+      periodAggregation.annualTotalKm
+    ),
+    roadFeesCostPerKm: safeDivide(
+      periodAggregation.annualRoadFeesCost,
+      periodAggregation.annualTotalKm
+    ),
+    variableCostPerKm: safeDivide(
+      periodAggregation.annualVariableOperatingCost,
+      periodAggregation.annualTotalKm
+    ),
+    variableAnnualCost: periodAggregation.annualVariableOperatingCost,
+    driverAnnualCost: periodAggregation.annualDriverCost,
+    vehicleFixedAnnualCost: periodAggregation.annualVehicleFixedCost,
+    structuralIndirectCostsAnnual:
+      periodAggregation.annualStructuralOverheadCost,
+    otherAnnualCost: periodAggregation.annualOtherCost,
+    totalAnnualCost: periodAggregation.totalAnnualCost,
+    breakEvenPerLoadedKm,
+    breakEvenPerTonneKm,
+    customerRateExclVat,
+    customerRateInclVat,
+    recommendedCustomerRateExclVat: customerRateExclVat,
+    recommendedCustomerRateInclVat: customerRateInclVat,
+    annualRevenueExclVat,
+    vatCollected,
+    invoiceValueInclVat,
+    ebitBeforeTax,
+    businessTax,
+    profitAfterTax,
+    afterTaxMargin: safeDivide(profitAfterTax, annualRevenueExclVat),
+    actualAnnualRevenueExclVat: periodAggregation.annualRevenueExclVat,
+    actualCustomerRateExclVat: periodAggregation.actualCustomerRateExclVat,
+    actualEbitBeforeTax,
+    actualBusinessTax,
+    actualProfitAfterTax,
+    actualAfterTaxMargin: safeDivide(
+      actualProfitAfterTax,
+      periodAggregation.annualRevenueExclVat
+    ),
+    periodAggregation,
+    periodBreakdown: periodAggregation.periodBreakdown,
+    dataCompletenessStatus: periodAggregation.dataCompletenessStatus,
+    warnings: periodAggregation.warnings
+  };
+
+  result.companyTotals = {
+    ...baseResult.companyTotals,
+    totalAnnualCost: result.totalAnnualCost,
+    annualRevenueExclVat: result.annualRevenueExclVat,
+    profitAfterTax: result.profitAfterTax
+  };
+  result.fleetTotals = result.companyTotals;
+
+  return result;
+}
+
+function selectModePeriods({
+  periods,
+  calculationMode,
+  asOfDate,
+  warnings,
+  warningDetails
+}) {
+  if (periods.length === 0) return [];
+  if (calculationMode === "snapshot") return periods;
+
+  const selected = [];
+  for (const group of groupPeriods(periods).values()) {
+    const sample = group[0];
+    let period = null;
+
+    if (calculationMode === "planned_annual") {
+      period =
+        findPeriodByStatus(group, "planned") ??
+        findPeriodByStatus(group, "forecast") ??
+        findPeriodByStatus(group, "actual") ??
+        sample;
+    } else if (calculationMode === "actual_annual") {
+      period = findPeriodByStatus(group, "actual");
+      if (!period) {
+        addWarning(warnings, periodWarningCodes.ACTUAL_YEAR_INCOMPLETE);
+        warningDetails.push({
+          code: periodWarningCodes.ACTUAL_YEAR_INCOMPLETE,
+          periodStart: sample.periodStart,
+          periodEnd: sample.periodEnd
+        });
+      }
+    } else if (isCompletedPeriod(sample, asOfDate)) {
+      period =
+        findPeriodByStatus(group, "actual") ?? findPeriodByStatus(group, "planned");
+      if (!findPeriodByStatus(group, "actual")) {
+        addWarning(warnings, periodWarningCodes.MISSING_ACTUAL_PERIODS);
+        warningDetails.push({
+          code: periodWarningCodes.MISSING_ACTUAL_PERIODS,
+          periodStart: sample.periodStart,
+          periodEnd: sample.periodEnd
+        });
+      }
+    } else {
+      period =
+        findPeriodByStatus(group, "forecast") ??
+        findPeriodByStatus(group, "planned");
+      if (!findPeriodByStatus(group, "forecast")) {
+        addWarning(warnings, periodWarningCodes.MISSING_FORECAST_PERIODS);
+        warningDetails.push({
+          code: periodWarningCodes.MISSING_FORECAST_PERIODS,
+          periodStart: sample.periodStart,
+          periodEnd: sample.periodEnd
+        });
+      }
+    }
+
+    if (period) selected.push(period);
+  }
+
+  return selected;
+}
+
+function normalizeScenarioPeriods(periods, annualFallbackInputs) {
+  if (periods == null) return [];
+  if (!Array.isArray(periods)) {
+    throw validationError("periods must be an array", "periods");
+  }
+
+  return periods.map((period, index) =>
+    normalizeScenarioPeriod(period, index, annualFallbackInputs)
+  );
+}
+
+function normalizeScenarioPeriod(period, index, annualFallbackInputs) {
+  const periodStart = normalizeOptionalDate(
+    period.periodStart ?? period.period_start ?? period.startDate ?? period.start_date
+  );
+  const periodEnd = normalizeOptionalDate(
+    period.periodEnd ?? period.period_end ?? period.endDate ?? period.end_date
+  );
+  const totalKm = parseOptionalNumber(
+    period.totalKm ?? period.total_km ?? period.annualTotalKm,
+    `periods[${index}].totalKm`
+  );
+  const loadFactor = parseOptionalNumber(
+    period.loadFactor ?? period.load_factor ?? period.loadedRatio,
+    `periods[${index}].loadFactor`
+  );
+  const directLoadedKm = parseOptionalNumber(
+    period.loadedKm ??
+      period.loaded_km ??
+      period.loadedRevenueKm ??
+      period.loadedKmYear,
+    `periods[${index}].loadedKm`
+  );
+  const loadedKm =
+    directLoadedKm ?? (totalKm != null && loadFactor != null ? totalKm * loadFactor : 0);
+  const safeTotalKm = totalKm ?? loadedKm;
+  const fuelConsumption = parseOptionalNumber(
+    period.fuelConsumptionLPer100Km ??
+      period.fuel_consumption_l_per_100km,
+    `periods[${index}].fuelConsumptionLPer100Km`
+  );
+  const fuelPrice = parseOptionalNumber(
+    period.fuelPricePerLiter ??
+      period.fuel_price_per_liter ??
+      period.fuelPriceExVat,
+    `periods[${index}].fuelPricePerLiter`
+  );
+  const directFuelCost = parseOptionalNumber(
+    period.fuelCost ?? period.fuel_cost,
+    `periods[${index}].fuelCost`
+  );
+  const fuelCost =
+    directFuelCost ??
+    (safeTotalKm != null && fuelConsumption != null && fuelPrice != null
+      ? (safeTotalKm * fuelConsumption * fuelPrice) / 100
+      : 0);
+  const tyresCost = parseOptionalNumber(
+    period.tyresCost ?? period.tyres_cost ?? period.tiresCost ?? period.tires_cost,
+    `periods[${index}].tyresCost`,
+    0
+  );
+  const maintenanceCost = parseOptionalNumber(
+    period.maintenanceCost ?? period.maintenance_cost,
+    `periods[${index}].maintenanceCost`,
+    0
+  );
+  const roadFeesCost = parseOptionalNumber(
+    period.roadFeesCost ?? period.road_fees_cost ?? period.roadFees,
+    `periods[${index}].roadFeesCost`,
+    0
+  );
+  const driverCost = parseOptionalNumber(
+    period.driverCost ?? period.driver_cost,
+    `periods[${index}].driverCost`,
+    0
+  );
+  const fixedVehicleCost = parseOptionalNumber(
+    period.fixedVehicleCost ??
+      period.fixed_vehicle_cost ??
+      period.vehicleFixedCost ??
+      period.vehicle_fixed_cost,
+    `periods[${index}].fixedVehicleCost`,
+    0
+  );
+  const structuralOverheadCost = parseOptionalNumber(
+    period.structuralOverheadCost ??
+      period.structural_overhead_cost ??
+      period.structuralIndirectCostsAnnual,
+    `periods[${index}].structuralOverheadCost`,
+    0
+  );
+  const otherCost = parseOptionalNumber(
+    period.otherCost ?? period.other_cost,
+    `periods[${index}].otherCost`,
+    0
+  );
+  const revenueExclVat = parseOptionalNumber(
+    period.revenueExclVat ??
+      period.revenue_excl_vat ??
+      period.annualRevenueExclVat,
+    `periods[${index}].revenueExclVat`,
+    0
+  );
+  const variableCost = fuelCost + tyresCost + maintenanceCost + roadFeesCost;
+  const periodTotalCost =
+    variableCost +
+    driverCost +
+    fixedVehicleCost +
+    structuralOverheadCost +
+    otherCost;
+
+  if (periodStart && periodEnd && periodStart > periodEnd) {
+    throw validationError(
+      `periods[${index}].periodStart must be before periodEnd`,
+      `periods[${index}].periodStart`
+    );
+  }
+
+  if (safeTotalKm < 0 || loadedKm < 0 || periodTotalCost < 0) {
+    throw validationError(
+      `periods[${index}] cannot contain negative kilometres or cost`,
+      `periods[${index}]`
+    );
+  }
+
+  return {
+    id: period.id ?? `period-${index + 1}`,
+    periodStart,
+    periodEnd,
+    periodType: normalizePeriodType(period.periodType ?? period.period_type),
+    dataStatus: normalizeDataStatus(period.dataStatus ?? period.data_status),
+    totalKm: safeTotalKm,
+    loadedKm,
+    loadFactor: safeDivide(loadedKm, safeTotalKm),
+    emptyKm: Math.max(0, safeTotalKm - loadedKm),
+    fuelPricePerLiter: fuelPrice,
+    fuelConsumptionLPer100Km: fuelConsumption,
+    fuelCost,
+    tyresCost,
+    maintenanceCost,
+    roadFeesCost,
+    variableCost,
+    driverCost,
+    fixedVehicleCost,
+    structuralOverheadCost,
+    otherCost,
+    revenueExclVat,
+    periodTotalCost,
+    breakEvenPerLoadedKm: safeDivide(periodTotalCost, loadedKm),
+    notes: period.notes ?? ""
+  };
+}
+
+function groupPeriods(periods) {
+  const groups = new Map();
+  periods.forEach((period, index) => {
+    const key =
+      period.periodStart || period.periodEnd
+        ? `${period.periodStart ?? ""}|${period.periodEnd ?? ""}`
+        : `row-${index}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(period);
+  });
+  return groups;
+}
+
+function findPeriodByStatus(periods, status) {
+  return periods.find((period) => period.dataStatus === status);
+}
+
+function isCompletedPeriod(period, asOfDate) {
+  if (!asOfDate || !period.periodEnd) return period.dataStatus === "actual";
+  return period.periodEnd <= asOfDate;
+}
+
+function resolveDataCompletenessStatus({
+  calculationMode,
+  selectedPeriods,
+  sourcePeriods,
+  warnings
+}) {
+  if (sourcePeriods.length === 0) return "fallback";
+  if (selectedPeriods.length === 0) return "incomplete";
+  if (
+    calculationMode === "actual_annual" &&
+    warnings.includes(periodWarningCodes.ACTUAL_YEAR_INCOMPLETE)
+  ) {
+    return "incomplete";
+  }
+  if (
+    warnings.includes(periodWarningCodes.MISSING_ACTUAL_PERIODS) ||
+    warnings.includes(periodWarningCodes.MISSING_FORECAST_PERIODS) ||
+    warnings.includes(periodWarningCodes.PERIOD_DATA_INCOMPLETE)
+  ) {
+    return "partial";
+  }
+  return "complete";
+}
+
+function addWarning(warnings, code) {
+  if (!warnings.includes(code)) warnings.push(code);
 }
 
 export function generatePricingScenarios(payload = {}) {
@@ -1103,6 +1687,123 @@ function defaultFuelPrices(currentFuelPrice) {
   );
 }
 
+function getPayloadPeriods(payload = {}) {
+  const raw = payload.input ?? payload.inputs ?? payload;
+  return payload.periods ?? payload.scenarioPeriods ?? raw.periods ?? [];
+}
+
+function normalizeCalculationMode(value = "snapshot") {
+  const normalized = String(value || "snapshot")
+    .trim()
+    .replace(/([a-z])([A-Z])/g, "$1_$2")
+    .replace(/[\s-]+/g, "_")
+    .toLowerCase();
+  const aliases = {
+    planned: "planned_annual",
+    planned_annual_break_even: "planned_annual",
+    annual_plan: "planned_annual",
+    rolling: "rolling_forecast",
+    forecast: "rolling_forecast",
+    rolling_break_even_forecast: "rolling_forecast",
+    actual: "actual_annual",
+    actual_break_even: "actual_annual"
+  };
+  const mode = aliases[normalized] ?? normalized;
+
+  if (!calculationModes.includes(mode)) {
+    throw validationError(
+      `calculationMode must be one of ${calculationModes.join(", ")}`,
+      "calculationMode"
+    );
+  }
+
+  return mode;
+}
+
+function calculationModeLabel(mode) {
+  return {
+    snapshot: "Snapshot break-even",
+    planned_annual: "Planned annual break-even",
+    rolling_forecast: "Rolling break-even forecast",
+    actual_annual: "Actual annual break-even"
+  }[mode];
+}
+
+function normalizePlanYear(value) {
+  if (value == null || value === "") return null;
+  const year = Number(value);
+  if (!Number.isInteger(year) || year < 1900 || year > 9999) {
+    throw validationError("planYear must be a four-digit year", "planYear");
+  }
+  return year;
+}
+
+function normalizeAsOfDate(value) {
+  if (value == null || value === "") return null;
+  return normalizeRequiredDate(value, "asOfDate");
+}
+
+function normalizeOptionalDate(value) {
+  if (value == null || value === "") return null;
+  return normalizeRequiredDate(value, "periodDate");
+}
+
+function normalizeRequiredDate(value, field) {
+  if (value instanceof Date && !Number.isNaN(value.valueOf())) {
+    return value.toISOString().slice(0, 10);
+  }
+  const text = String(value).trim();
+  const parsed = new Date(`${text}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || Number.isNaN(parsed.valueOf())) {
+    throw validationError(`${field} must use YYYY-MM-DD`, field);
+  }
+  return text;
+}
+
+function normalizeScenarioStatus(value = "draft") {
+  const status = String(value || "draft").trim().toLowerCase();
+  const allowed = ["draft", "reviewed", "approved", "archived"];
+  if (!allowed.includes(status)) {
+    throw validationError(
+      `scenarioStatus must be one of ${allowed.join(", ")}`,
+      "scenarioStatus"
+    );
+  }
+  return status;
+}
+
+function normalizeScenarioVersion(value = 1) {
+  const version = Number(value ?? 1);
+  if (!Number.isInteger(version) || version < 1) {
+    throw validationError("scenarioVersion must be a positive whole number", "scenarioVersion");
+  }
+  return version;
+}
+
+function normalizePeriodType(value = "month") {
+  const type = String(value || "month").trim().toLowerCase();
+  const allowed = ["month", "week", "custom"];
+  if (!allowed.includes(type)) {
+    throw validationError(
+      `periodType must be one of ${allowed.join(", ")}`,
+      "periodType"
+    );
+  }
+  return type;
+}
+
+function normalizeDataStatus(value = "planned") {
+  const status = String(value || "planned").trim().toLowerCase();
+  const allowed = ["planned", "actual", "forecast"];
+  if (!allowed.includes(status)) {
+    throw validationError(
+      `dataStatus must be one of ${allowed.join(", ")}`,
+      "dataStatus"
+    );
+  }
+  return status;
+}
+
 function normaliseNumberArray(values, field) {
   if (!Array.isArray(values) || values.length === 0) {
     throw validationError(`${field} must contain at least one value`, field);
@@ -1130,6 +1831,11 @@ function parseFiniteNumber(value, field) {
     throw validationError(`${field} must be a finite number`, field);
   }
   return number;
+}
+
+function parseOptionalNumber(value, field, defaultValue = null) {
+  if (value == null || value === "") return defaultValue;
+  return parseFiniteNumber(value, field);
 }
 
 function requirePositiveDenominator(value, field) {

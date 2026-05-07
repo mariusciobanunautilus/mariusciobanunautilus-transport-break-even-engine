@@ -30,6 +30,23 @@ test("calculation runs can be saved, listed, opened and deleted", async () => {
       customerRateExclVat: 1.8,
       profitAfterTax: 12000
     },
+    calculationMode: "rolling_forecast",
+    planYear: 2026,
+    asOfDate: "2026-05-07",
+    scenarioStatus: "draft",
+    engineVersion: "time-weighted-v1",
+    scenarioName: "May forecast",
+    scenarioVersion: 1,
+    periods: [
+      {
+        periodStart: "2026-01-01",
+        periodEnd: "2026-01-31",
+        periodType: "month",
+        dataStatus: "actual",
+        loadedKm: 10000,
+        otherCost: 14000
+      }
+    ],
     pricingScenarios: [
       {
         markupPercentage: 0.15,
@@ -46,6 +63,12 @@ test("calculation runs can be saved, listed, opened and deleted", async () => {
   const opened = await getCalculationRun(saved.id);
   assert.equal(opened.runName, "Storage smoke test");
   assert.equal(opened.resultSnapshot.breakEvenPerLoadedKm, 1.5);
+  assert.equal(opened.calculationMode, "rolling_forecast");
+  assert.equal(opened.planYear, 2026);
+  assert.equal(opened.asOfDate, "2026-05-07");
+  assert.equal(opened.scenarioStatus, "draft");
+  assert.equal(opened.periods.length, 1);
+  assert.equal(opened.periods[0].dataStatus, "actual");
 
   assert.equal(await deleteCalculationRun(saved.id, "test"), true);
   assert.equal(await getCalculationRun(saved.id), null);

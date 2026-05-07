@@ -130,6 +130,14 @@ router.post("/calculations", async (req, res) => {
       vehicleSnapshot: calculation.vehicleSnapshot,
       resultSnapshot: calculation.result,
       pricingScenarios,
+      periods: calculation.periods,
+      calculationMode: calculation.calculationMode,
+      planYear: calculation.planYear,
+      asOfDate: calculation.asOfDate,
+      scenarioStatus: calculation.scenarioStatus,
+      engineVersion: calculation.engineVersion,
+      scenarioName: calculation.scenarioName,
+      scenarioVersion: calculation.scenarioVersion,
       createdBy: req.body?.createdBy
     });
 
@@ -139,7 +147,10 @@ router.post("/calculations", async (req, res) => {
         totalAnnualCost: calculation.result.totalAnnualCost,
         breakEvenPerLoadedKm: calculation.result.breakEvenPerLoadedKm,
         customerRateExclVat: calculation.result.customerRateExclVat,
-        profitAfterTax: calculation.result.profitAfterTax
+        profitAfterTax: calculation.result.profitAfterTax,
+        calculationMode: calculation.calculationMode,
+        dataCompletenessStatus: calculation.dataCompletenessStatus,
+        warnings: calculation.warnings
       },
       savedRun
     });

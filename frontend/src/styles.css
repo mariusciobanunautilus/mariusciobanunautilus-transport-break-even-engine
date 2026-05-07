@@ -1112,6 +1112,134 @@ p {
   max-width: 100%;
 }
 
+.sensitivity-lab-intro {
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--accent);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(22, 119, 97, 0.08), rgba(255, 255, 255, 0) 44%),
+    var(--panel);
+  padding: 16px;
+}
+
+.sensitivity-lab-intro h2 {
+  margin: 4px 0 8px;
+  color: var(--text);
+  font-size: 1.22rem;
+}
+
+.sensitivity-lab-intro p {
+  max-width: 780px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.sensitivity-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.hover-sensitivity-card {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 1px 0 rgba(23, 32, 42, 0.02);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.hover-sensitivity-card:hover,
+.hover-sensitivity-card:focus-within {
+  border-color: rgba(22, 119, 97, 0.45);
+  box-shadow: 0 14px 34px rgba(23, 32, 42, 0.08);
+  transform: translateY(-1px);
+}
+
+.hover-sensitivity-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.34fr);
+  gap: 16px;
+  align-items: center;
+  padding: 16px;
+}
+
+.hover-sensitivity-summary span {
+  color: var(--accent-strong);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.hover-sensitivity-summary h2 {
+  margin: 4px 0 6px;
+  color: var(--text);
+  font-size: 1.08rem;
+}
+
+.hover-sensitivity-summary p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.hover-sensitivity-metric {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+  min-width: 0;
+  text-align: right;
+}
+
+.hover-sensitivity-metric strong {
+  color: var(--text);
+  font-size: 1.45rem;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+
+.hover-sensitivity-metric small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 820;
+}
+
+.hover-sensitivity-body {
+  display: grid;
+  gap: 14px;
+  max-height: 0;
+  overflow: hidden;
+  border-top: 1px solid transparent;
+  opacity: 0;
+  padding: 0 16px;
+  transition:
+    max-height 260ms ease,
+    opacity 180ms ease,
+    padding 180ms ease,
+    border-color 180ms ease;
+}
+
+.hover-sensitivity-card:hover .hover-sensitivity-body,
+.hover-sensitivity-card:focus-within .hover-sensitivity-body {
+  max-height: 1600px;
+  border-top-color: var(--line);
+  opacity: 1;
+  padding: 14px 16px 16px;
+}
+
+.sensitivity-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
 .slider-panel {
   display: grid;
   gap: 10px;
@@ -1148,7 +1276,7 @@ p {
 
 .sensitivity-bar {
   display: grid;
-  grid-template-columns: 74px minmax(0, 1fr) minmax(74px, auto);
+  grid-template-columns: minmax(120px, 0.34fr) minmax(0, 1fr) minmax(82px, auto);
   gap: 8px;
   align-items: center;
 }
@@ -1323,6 +1451,148 @@ th {
   line-height: 1.45;
 }
 
+.time-model-hero,
+.mode-status-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 16px;
+}
+
+.time-model-hero h2,
+.mode-status-panel strong {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.28rem;
+}
+
+.mode-status-panel {
+  grid-template-columns: minmax(210px, 1fr) minmax(260px, 1.2fr) auto;
+  align-items: stretch;
+}
+
+.mode-status-panel p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.mode-badge {
+  display: inline-flex;
+  width: fit-content;
+  margin-bottom: 8px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  padding: 4px 9px;
+  font-size: 0.75rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.mode-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mode-warnings,
+.warning-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mode-warnings {
+  grid-column: 1 / -1;
+}
+
+.mode-warnings span,
+.warning-panel span {
+  border: 1px solid #efd7a9;
+  border-radius: 999px;
+  background: var(--warning-soft);
+  color: #815000;
+  padding: 5px 9px;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.mode-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-content: start;
+  justify-content: flex-end;
+}
+
+.mode-actions button,
+.time-model-hero button,
+.empty-periods button {
+  min-height: 34px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--text);
+  padding: 7px 10px;
+  font-weight: 800;
+}
+
+.period-table {
+  display: grid;
+  gap: 10px;
+}
+
+.period-table-head,
+.period-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.85fr) minmax(120px, 0.55fr) minmax(110px, 0.45fr) minmax(110px, 0.45fr) minmax(340px, 1.3fr) minmax(120px, 0.55fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.period-table-head {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.period-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-muted);
+  padding: 10px;
+}
+
+.period-dates,
+.period-cost-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.period-cost-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.empty-periods {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+  color: var(--muted);
+}
+
+.warning-panel {
+  border: 1px solid #efd7a9;
+  border-radius: 8px;
+  background: var(--warning-soft);
+  padding: 10px;
+}
+
 @media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -1351,11 +1621,16 @@ th {
   .calculation-breakdown-header,
   .equation-grid,
   .advanced-formula-grid,
+  .hover-sensitivity-summary,
   .dashboard-layout,
   .two-column,
   .form-grid,
   .group-toolbar,
-  .group-summary {
+  .group-summary,
+  .time-model-hero,
+  .mode-status-panel,
+  .period-table-head,
+  .period-row {
     grid-template-columns: 1fr;
   }
 
@@ -1365,7 +1640,9 @@ th {
 
   .first-run-steps,
   .formula-flow,
-  .comparison-grid {
+  .comparison-grid,
+  .period-cost-grid,
+  .mode-facts {
     grid-template-columns: 1fr;
   }
 
@@ -1382,6 +1659,7 @@ th {
   .field-grid,
   .input-section-nav,
   .input-actions,
+  .sensitivity-facts,
   .compact-fields {
     grid-template-columns: 1fr;
   }
@@ -1442,6 +1720,15 @@ th {
     flex: 0 0 auto;
     width: auto;
     white-space: nowrap;
+  }
+}
+
+@media (hover: none) {
+  .hover-sensitivity-body {
+    max-height: none;
+    border-top-color: var(--line);
+    opacity: 1;
+    padding: 14px 16px 16px;
   }
 }
 
