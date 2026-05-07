@@ -15,6 +15,12 @@
     "db:migrate": "npm --prefix backend run db:migrate",
     "db:seed": "npm --prefix backend run db:seed",
     "build": "npm --prefix frontend run build",
-    "test": "npm --prefix shared run test && npm --prefix backend run test"
+    "test": "npm --prefix shared run test && npm --prefix backend run test",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@types/node": "^25.6.0"
   }
 }
