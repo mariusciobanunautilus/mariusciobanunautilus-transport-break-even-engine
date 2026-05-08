@@ -1,10 +1,18 @@
 // @ts-check
 import { expect, test } from "@playwright/test";
 
+async function openWorkspace(page, path = "/") {
+  await page.goto(path);
+  await page.getByLabel("Email").fill("admin@example.com");
+  await page.getByLabel("Password").fill("admin12345");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("heading", { name: /pricing workspace/i })).toBeVisible();
+}
+
 test("dashboard explains the first run and exposes the main break-even result", async ({
   page
 }) => {
-  await page.goto("/");
+  await openWorkspace(page);
 
   await expect(page.getByRole("heading", { name: /pricing workspace/i })).toBeVisible();
   await expect(page.getByText("First run")).toBeVisible();
@@ -17,7 +25,7 @@ test("dashboard explains the first run and exposes the main break-even result", 
 test("editing an input marks results stale and recalculation clears the warning", async ({
   page
 }) => {
-  await page.goto("/#/inputs");
+  await openWorkspace(page, "/#/inputs");
 
   await expect(page.getByRole("heading", { name: "Activity And Load" })).toBeVisible();
   await page.getByLabel("Daily km").fill("500");
@@ -29,7 +37,7 @@ test("editing an input marks results stale and recalculation clears the warning"
 });
 
 test("input section nav, validation, undo and reset are available", async ({ page }) => {
-  await page.goto("/#/inputs");
+  await openWorkspace(page, "/#/inputs");
 
   await page.getByRole("button", { name: "Variable Cost" }).click();
   await expect(page.getByLabel("Fuel price")).toBeVisible();
@@ -45,7 +53,7 @@ test("input section nav, validation, undo and reset are available", async ({ pag
 test("pricing slider updates the selected markup and scenarios can be pinned", async ({
   page
 }) => {
-  await page.goto("/#/pricing");
+  await openWorkspace(page, "/#/pricing");
 
   await expect(page.getByRole("heading", { name: "Selected Markup" })).toBeVisible();
   await page.getByLabel("Markup over break-even").fill("0.30");
@@ -57,7 +65,7 @@ test("pricing slider updates the selected markup and scenarios can be pinned", a
 });
 
 test("break-even result explains formulas as a calculation breakdown", async ({ page }) => {
-  await page.goto("/#/results");
+  await openWorkspace(page, "/#/results");
 
   await expect(page.getByRole("heading", { name: "How the break-even is built" })).toBeVisible();
   await expect(page.getByText("Activity").first()).toBeVisible();
@@ -67,7 +75,7 @@ test("break-even result explains formulas as a calculation breakdown", async ({ 
 });
 
 test("sensitivity page stacks expandable sensitivity cards", async ({ page }) => {
-  await page.goto("/#/sensitivity");
+  await openWorkspace(page, "/#/sensitivity");
 
   await expect(
     page.getByRole("heading", { name: "Hover a card to inspect the moving parts" })

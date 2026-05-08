@@ -59,7 +59,14 @@ Mixed fleets are calculated group by group first, then aggregated into fleet-lev
    - `GET /api/exports/:calculationRunId/json`
    - SQL draft includes calculation result, pricing scenario and audit tables
 
-7. Verification
+7. Production hardening
+   - Built-in email/password auth with bearer sessions
+   - Shared workspace scoping for saved runs, exports and audit rows
+   - Production startup guard for missing `DATABASE_URL`
+   - Restricted CORS via `CORS_ORIGIN`
+   - Tax/reference governance metadata for source, confidence and review status
+
+8. Verification
    - Shared formula tests
    - Backend storage tests
    - Frontend production build
@@ -102,9 +109,16 @@ Run backend:
 npm run dev:backend
 ```
 
+Local login defaults without Postgres:
+
+- email: `admin@example.com`
+- password: `admin12345`
+
+Set `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `WORKSPACE_NAME` in `backend/.env` to override them.
+
 ## Notes
 
-The frontend uses the backend APIs when available. If the backend is not running, it can still show a local preview through the shared engine, but saving/history/export require the backend process.
+The frontend now requires a backend session. Calculation previews still use the shared engine as a local fallback after sign-in if a preview endpoint is temporarily unavailable, but login, saving, history and export require the backend process.
 
 ## Database Behaviour
 
@@ -115,7 +129,9 @@ When `DATABASE_URL` is configured, the backend reads reference data from Postgre
 - `pricing_scenarios`
 - `audit_log`
 
-When `DATABASE_URL` is not configured, the backend falls back to an in-memory store so local development still works. In-memory saved runs are lost when the backend restarts.
+When `DATABASE_URL` is not configured, the backend falls back to an in-memory store so local development still works. In-memory users, sessions and saved runs are lost when the backend restarts.
+
+In production, `DATABASE_URL` and `CORS_ORIGIN` are required. The server refuses to start without them. The first workspace admin is bootstrapped from `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `WORKSPACE_NAME` when the database has no users yet.
 
 The current database layer uses `pg` and `backend/schema.sql`. Prisma/TypeScript migrations are still a future hardening step, but the current app no longer depends on memory storage when Postgres is configured.
 

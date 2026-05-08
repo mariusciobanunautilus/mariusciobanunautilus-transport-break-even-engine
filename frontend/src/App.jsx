@@ -7,12 +7,8 @@ import {
   generateSensitivity,
   getBlueprintReferenceData
 } from "@transport-break-even/shared";
-
-const configuredApi =
-  import.meta.env.VITE_API_BASE ||
-  import.meta.env.VITE_API_URL ||
-  "http://localhost:10000";
-const API_BASE = configuredApi.replace(/\/api\/?$/, "").replace(/\/$/, "");
+import { apiRequest, getStoredAuthToken, setApiAuthToken } from "./apiClient.js";
+import { DashboardVisualAidGrid } from "./DashboardVisualAids.jsx";
 
 const fallbackReference = getBlueprintReferenceData();
 
@@ -133,6 +129,9 @@ const metricHelp = {
 };
 
 export default function App() {
+  const [session, setSession] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authMessage, setAuthMessage] = useState("");
   const [reference, setReference] = useState(fallbackReference);
   const [activePage, setActivePage] = useState(() => pageFromHash());
   const [input, setInput] = useState(defaultBlueprintCalculationInput);
@@ -213,13 +212,28 @@ export default function App() {
   );
 
   useEffect(() => {
-    loadReferenceData();
-    loadHistory();
+    restoreSession();
+
+    function handleExpiredSession() {
+      setSession(null);
+      setAuthMessage("Session expired. Please sign in again.");
+    }
+
+    window.addEventListener("transport-auth-expired", handleExpiredSession);
+    return () =>
+      window.removeEventListener("transport-auth-expired", handleExpiredSession);
   }, []);
 
   useEffect(() => {
+    if (!session) return;
+    loadReferenceData();
+    loadHistory();
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) return;
     previewCalculation({ silent: true });
-  }, []);
+  }, [session]);
 
   useEffect(() => {
     const handleHashChange = () => setActivePage(pageFromHash());
@@ -249,6 +263,49 @@ export default function App() {
   const activePageLabel = pages.find(([key]) => key === activePage)?.[1] || "Dashboard";
   const currentCountry = selectedCountry || reference.countries[0];
   setActiveFormatContext(currentCountry);
+
+  async function restoreSession() {
+    const token = getStoredAuthToken();
+    if (!token) {
+      setAuthReady(true);
+      return;
+    }
+
+    try {
+      const restored = await apiRequest("/api/auth/me");
+      setSession(restored);
+    } catch {
+      setApiAuthToken("");
+    } finally {
+      setAuthReady(true);
+    }
+  }
+
+  async function signIn(credentials) {
+    setAuthMessage("");
+    const nextSession = await apiRequest("/api/auth/login", {
+      method: "POST",
+      body: credentials
+    });
+    setApiAuthToken(nextSession.token);
+    setSession({
+      user: nextSession.user,
+      workspace: nextSession.workspace
+    });
+    setStatus("Ready");
+  }
+
+  async function signOut() {
+    try {
+      await apiRequest("/api/auth/logout", { method: "POST" });
+    } catch {
+      // The local session is cleared even if the backend is already unavailable.
+    }
+
+    setApiAuthToken("");
+    setSession(null);
+    setAuthMessage("");
+  }
 
   function selectPage(page) {
     const nextPage = pages.some(([key]) => key === page) ? page : "dashboard";
@@ -674,6 +731,14 @@ export default function App() {
 
   const result = displayCalculation?.result;
 
+  if (!authReady) {
+    return <AuthShell title="Opening workspace" message="Checking your session." />;
+  }
+
+  if (!session) {
+    return <LoginPage message={authMessage} onSignIn={signIn} />;
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -721,6 +786,7 @@ export default function App() {
             <button className="secondary-button" disabled={isSaving} onClick={saveRun} type="button">
               {isSaving ? "Saving..." : "Save Run"}
             </button>
+            <SessionChip onSignOut={signOut} session={session} />
           </div>
         </header>
 
@@ -837,6 +903,82 @@ export default function App() {
   );
 }
 
+function AuthShell({ message, title }) {
+  return (
+    <main className="auth-shell">
+      <section className="auth-panel">
+        <p className="eyebrow">Transport Break-even Engine</p>
+        <h1>{title}</h1>
+        <p>{message}</p>
+      </section>
+    </main>
+  );
+}
+
+function LoginPage({ message, onSignIn }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState(message || "");
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setIsSubmitting(true);
+    setError("");
+
+    try {
+      await onSignIn({ email, password });
+    } catch (nextError) {
+      setError(nextError.message || "Sign in failed");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="auth-shell">
+      <form className="auth-panel" onSubmit={handleSubmit}>
+        <p className="eyebrow">Transport Break-even Engine</p>
+        <h1>Sign in to the pricing workspace</h1>
+        <label className="text-field">
+          <span>Email</span>
+          <input
+            autoComplete="email"
+            onChange={(event) => setEmail(event.target.value)}
+            type="email"
+            value={email}
+          />
+        </label>
+        <label className="text-field">
+          <span>Password</span>
+          <input
+            autoComplete="current-password"
+            onChange={(event) => setPassword(event.target.value)}
+            type="password"
+            value={password}
+          />
+        </label>
+        {error && <div className="auth-error">{error}</div>}
+        <button className="primary-button" disabled={isSubmitting} type="submit">
+          {isSubmitting ? "Signing in..." : "Sign in"}
+        </button>
+      </form>
+    </main>
+  );
+}
+
+function SessionChip({ onSignOut, session }) {
+  return (
+    <div className="session-chip">
+      <span>{session.workspace?.name || "Workspace"}</span>
+      <strong>{session.user?.email || "Signed in"}</strong>
+      <button onClick={onSignOut} type="button">
+        Sign out
+      </button>
+    </div>
+  );
+}
+
 function DashboardPage({
   fleetGroups,
   generateMonthlyPlan,
@@ -915,11 +1057,13 @@ function DashboardPage({
       </section>
 
       <DashboardVisualAidGrid
+        formatContext={getFormatContext(selectedCountry)}
         onGeneratePlan={generateMonthlyPlan}
         onOpenTimeModel={() => setActivePage("time")}
         periods={periods}
         pricingScenarios={pricingScenarios}
         result={result}
+        selectedTaxProfile={selectedTaxProfile}
         timeModel={timeModel}
       />
 
@@ -1004,278 +1148,6 @@ function DashboardPage({
   );
 }
 
-function DashboardVisualAidGrid({
-  onGeneratePlan,
-  onOpenTimeModel,
-  periods,
-  pricingScenarios,
-  result,
-  timeModel
-}) {
-  return (
-    <section className="dashboard-visual-grid">
-      <CostBreakdownVisual result={result} />
-      <TimeWeightedTimeline
-        onGeneratePlan={onGeneratePlan}
-        onOpenTimeModel={onOpenTimeModel}
-        periods={periods}
-        result={result}
-        timeModel={timeModel}
-      />
-      <PeriodComparisonVisual
-        onGeneratePlan={onGeneratePlan}
-        onOpenTimeModel={onOpenTimeModel}
-        periods={periods}
-        result={result}
-      />
-      <ModelSignalsVisual
-        periods={periods}
-        pricingScenarios={pricingScenarios}
-        result={result}
-        timeModel={timeModel}
-      />
-    </section>
-  );
-}
-
-function CostBreakdownVisual({ result }) {
-  const rows = buildCostBreakdownRows(result);
-  const total = rows.reduce((sum, row) => sum + row.value, 0);
-
-  return (
-    <section className="dashboard-visual-panel cost-breakdown-visual">
-      <div className="panel-heading">
-        <h2>Cost Mix</h2>
-        <span>{money(total || result?.totalAnnualCost)}</span>
-      </div>
-      {rows.length === 0 ? (
-        <EmptyVisual text="No cost result yet" />
-      ) : (
-        <>
-          <div className="stacked-cost-bar" aria-label="Cost breakdown">
-            {rows.map((row) => (
-              <span
-                key={row.label}
-                style={{
-                  "--segment-color": row.color,
-                  "--segment-width": `${Math.max(row.share, 1.5)}%`
-                }}
-                title={`${row.label}: ${money(row.value)}`}
-              />
-            ))}
-          </div>
-          <div className="cost-legend">
-            {rows.map((row) => (
-              <div className="cost-legend-row" key={row.label}>
-                <span style={{ "--legend-color": row.color }} />
-                <strong>{row.label}</strong>
-                <small>{money(row.value)}</small>
-                <em>{format(row.share)}%</em>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-    </section>
-  );
-}
-
-function TimeWeightedTimeline({
-  onGeneratePlan,
-  onOpenTimeModel,
-  periods,
-  result,
-  timeModel
-}) {
-  const months = buildTimelineMonths({ periods, result, timeModel });
-  const hasPeriods = periods.length > 0;
-  const mode = result?.calculationMode || timeModel?.calculationMode || "snapshot";
-
-  return (
-    <section className="dashboard-visual-panel timeline-visual">
-      <div className="panel-heading">
-        <h2>Time Timeline</h2>
-        <span>{calculationModeLabels[mode] || titleCase(mode)}</span>
-      </div>
-      <div className="timeline-track">
-        {months.map((month) => (
-          <div
-            className={[
-              "timeline-month",
-              `status-${month.status}`,
-              month.selected ? "selected" : ""
-            ].join(" ")}
-            key={month.key}
-            title={`${month.label}: ${titleCase(month.status)}`}
-          >
-            <span>{month.shortLabel}</span>
-          </div>
-        ))}
-      </div>
-      <div className="timeline-legend">
-        {["actual", "forecast", "planned", "snapshot"].map((status) => (
-          <span className={`status-dot status-${status}`} key={status}>
-            {titleCase(status)}
-          </span>
-        ))}
-      </div>
-      {!hasPeriods && (
-        <div className="visual-actions">
-          <button onClick={onGeneratePlan} type="button">
-            Generate Monthly Plan
-          </button>
-          <button onClick={onOpenTimeModel} type="button">
-            Time Model
-          </button>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function PeriodComparisonVisual({
-  onGeneratePlan,
-  onOpenTimeModel,
-  periods,
-  result
-}) {
-  const rows = buildPeriodComparisonRows({ periods, result });
-  const maxCost = Math.max(...rows.map((row) => row.cost), 0);
-  const maxLoadedKm = Math.max(...rows.map((row) => row.loadedKm), 0);
-
-  return (
-    <section className="dashboard-visual-panel period-comparison-visual">
-      <div className="panel-heading">
-        <h2>Plan Actual Forecast</h2>
-        <span>{rows.length ? `${rows.length} periods` : "No periods"}</span>
-      </div>
-      {rows.length === 0 ? (
-        <div className="empty-visual">
-          <span>No period rows yet</span>
-          <div className="visual-actions">
-            <button onClick={onGeneratePlan} type="button">
-              Generate Monthly Plan
-            </button>
-            <button onClick={onOpenTimeModel} type="button">
-              Time Model
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="period-comparison-list">
-          {rows.map((row) => (
-            <div className="period-comparison-row" key={row.key}>
-              <div className="period-comparison-label">
-                <strong>{row.label}</strong>
-                <span className={`period-status status-${row.status}`}>
-                  {titleCase(row.status)}
-                </span>
-              </div>
-              <div className="comparison-bars">
-                <span
-                  className="loaded-km-bar"
-                  style={{ "--bar-width": `${barPercent(row.loadedKm, maxLoadedKm)}%` }}
-                  title={`Loaded km: ${format(row.loadedKm)}`}
-                />
-                <span
-                  className="cost-bar"
-                  style={{ "--bar-width": `${barPercent(row.cost, maxCost)}%` }}
-                  title={`Cost: ${money(row.cost)}`}
-                />
-              </div>
-              <div className="period-comparison-values">
-                <span>{format(row.loadedKm)} km</span>
-                <strong>{money(row.cost)}</strong>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function ModelSignalsVisual({
-  periods,
-  pricingScenarios,
-  result,
-  timeModel
-}) {
-  const mode = result?.calculationMode || timeModel?.calculationMode || "snapshot";
-  const warnings = result?.warnings || [];
-  const completeness = result?.dataCompletenessStatus || "fallback";
-  const periodCount =
-    result?.periodAggregation?.sourcePeriodCount ?? periods.length ?? 0;
-  const signals = [
-    {
-      label: "Mode",
-      value: calculationModeLabels[mode] || titleCase(mode),
-      tone: mode === "snapshot" ? "neutral" : "good"
-    },
-    {
-      label: "Completeness",
-      value: titleCase(completeness),
-      tone:
-        completeness === "complete"
-          ? "good"
-          : completeness === "partial"
-            ? "warning"
-            : "danger"
-    },
-    {
-      label: "Periods",
-      value: formatCount(periodCount),
-      tone: periodCount > 0 ? "good" : "neutral"
-    },
-    {
-      label: "Warnings",
-      value: formatCount(warnings.length),
-      tone: warnings.length > 0 ? "warning" : "good"
-    },
-    {
-      label: "Pricing Cases",
-      value: formatCount(pricingScenarios.length),
-      tone: pricingScenarios.length > 0 ? "good" : "neutral"
-    }
-  ];
-
-  return (
-    <section className="dashboard-visual-panel model-signals-visual">
-      <div className="panel-heading">
-        <h2>Model Signals</h2>
-        <span>{timeModel?.scenarioStatus ? titleCase(timeModel.scenarioStatus) : "Draft"}</span>
-      </div>
-      <div className="signal-grid">
-        {signals.map((signal) => (
-          <div className={`signal-tile tone-${signal.tone}`} key={signal.label}>
-            <span>{signal.label}</span>
-            <strong>{signal.value}</strong>
-          </div>
-        ))}
-      </div>
-      {warnings.length > 0 ? (
-        <div className="signal-warnings">
-          {warnings.map((warning) => (
-            <span key={warning}>{friendlyWarning(warning)}</span>
-          ))}
-        </div>
-      ) : (
-        <div className="signal-warnings clear">
-          <span>No model warnings</span>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function EmptyVisual({ text }) {
-  return (
-    <div className="empty-visual">
-      <span>{text}</span>
-    </div>
-  );
-}
-
 function CompanyTaxPage({
   businessModels,
   companyTypes,
@@ -1334,7 +1206,25 @@ function CompanyTaxPage({
             label="Employer contribution"
             value={percent(selectedTaxProfile?.employerContributionRate)}
           />
+          <Fact label="Rule status" value={titleCase(selectedTaxProfile?.status || "indicative")} />
+          <Fact
+            label="Review status"
+            value={titleCase(selectedTaxProfile?.reviewStatus || "needs_review")}
+          />
+          <Fact
+            label="Confidence"
+            value={titleCase(selectedTaxProfile?.confidenceLevel || "medium")}
+          />
           <Fact label="Source date" value={formatMonth(selectedTaxProfile?.sourceDate)} />
+          <Fact
+            label="Last reviewed"
+            value={formatMonth(selectedTaxProfile?.lastReviewedAt)}
+          />
+          <Fact label="Valid from" value={formatMonth(selectedTaxProfile?.validFrom)} />
+          <Fact
+            label="Valid to"
+            value={selectedTaxProfile?.validTo ? formatMonth(selectedTaxProfile.validTo) : "Open"}
+          />
           <p className="disclaimer">
             The tax profile is a modelling layer for business planning. It is not tax advice.
           </p>
@@ -2867,238 +2757,7 @@ function buildDashboardGroupRows(fleetGroups, result) {
   });
 }
 
-function buildCostBreakdownRows(result) {
-  if (!result) return [];
-  const totalKm = Number(result.annualTotalKm || 0);
-  const aggregation = result.periodAggregation || {};
-  const variableDetails = [
-    {
-      color: "#167761",
-      label: "Fuel",
-      value:
-        aggregation.annualFuelCost ??
-        nullableCost(result.fuelCostPerKm) * totalKm
-    },
-    {
-      color: "#2f6fb0",
-      label: "Tyres",
-      value:
-        aggregation.annualTyresCost ??
-        nullableCost(result.tyresCostPerKm) * totalKm
-    },
-    {
-      color: "#7a5cbd",
-      label: "Maintenance",
-      value:
-        aggregation.annualMaintenanceCost ??
-        nullableCost(result.maintenanceCostPerKm) * totalKm
-    },
-    {
-      color: "#c98632",
-      label: "Road fees",
-      value:
-        aggregation.annualRoadFeesCost ??
-        nullableCost(result.roadFeesCostPerKm) * totalKm
-    }
-  ].filter((row) => row.value > 0);
-  const variableDetailTotal = variableDetails.reduce(
-    (sum, row) => sum + row.value,
-    0
-  );
-  const rows =
-    variableDetailTotal > 0
-      ? variableDetails
-      : [
-          {
-            color: "#167761",
-            label: "Variable",
-            value: nullableCost(result.variableAnnualCost)
-          }
-        ];
-
-  rows.push(
-    {
-      color: "#a43f5f",
-      label: "Driver",
-      value: nullableCost(result.driverAnnualCost)
-    },
-    {
-      color: "#55636f",
-      label: "Vehicle fixed",
-      value: nullableCost(result.vehicleFixedAnnualCost)
-    },
-    {
-      color: "#d9a441",
-      label: "Overhead",
-      value: nullableCost(result.structuralIndirectCostsAnnual)
-    },
-    {
-      color: "#4b8f8c",
-      label: "Other",
-      value: nullableCost(result.otherAnnualCost)
-    }
-  );
-
-  const cleanRows = rows.filter((row) => row.value > 0);
-  const shownTotal = cleanRows.reduce((sum, row) => sum + row.value, 0);
-  const totalCost = nullableCost(result.totalAnnualCost);
-
-  if (totalCost > shownTotal + 1) {
-    cleanRows.push({
-      color: "#8b949e",
-      label: "Unallocated",
-      value: totalCost - shownTotal
-    });
-  }
-
-  const denominator = cleanRows.reduce((sum, row) => sum + row.value, 0);
-  return cleanRows.map((row) => ({
-    ...row,
-    share: denominator > 0 ? (row.value / denominator) * 100 : 0
-  }));
-}
-
-function buildTimelineMonths({ periods = [], result, timeModel }) {
-  const planYear =
-    Number(result?.planYear || timeModel?.planYear) ||
-    inferYearFromPeriods(periods) ||
-    new Date().getFullYear();
-  const visualPeriods = buildVisualPeriods({ periods, result });
-  const selectedKeys = new Set(
-    (result?.periodAggregation?.periodBreakdown || result?.periodBreakdown || [])
-      .map(periodVisualKey)
-  );
-
-  return Array.from({ length: 12 }, (_, monthIndex) => {
-    const matchingPeriods = visualPeriods.filter((period) =>
-      periodOverlapsMonth(period, planYear, monthIndex)
-    );
-    const match =
-      matchingPeriods.find((period) => selectedKeys.has(periodVisualKey(period))) ||
-      matchingPeriods.find((period) => period.status === "actual") ||
-      matchingPeriods.find((period) => period.status === "forecast") ||
-      matchingPeriods[0];
-
-    return {
-      key: `${planYear}-${monthIndex + 1}`,
-      label: new Date(Date.UTC(planYear, monthIndex, 1)).toLocaleDateString(
-        activeFormatContext.locale,
-        { month: "long", year: "numeric" }
-      ),
-      selected: match ? selectedKeys.has(periodVisualKey(match)) : false,
-      shortLabel: new Date(Date.UTC(planYear, monthIndex, 1)).toLocaleDateString(
-        activeFormatContext.locale,
-        { month: "short" }
-      ),
-      status: match?.status || (periods.length > 0 ? "empty" : "snapshot")
-    };
-  });
-}
-
-function buildPeriodComparisonRows({ periods = [], result }) {
-  const visualPeriods = buildVisualPeriods({ periods, result });
-  return visualPeriods
-    .filter((period) => period.loadedKm > 0 || period.cost > 0)
-    .slice(0, 12)
-    .map((period, index) => ({
-      ...period,
-      key: `${periodVisualKey(period)}-${index}`,
-      label: shortPeriodLabel(period, index)
-    }));
-}
-
-function buildVisualPeriods({ periods = [], result }) {
-  const selectedPeriods =
-    result?.periodAggregation?.periodBreakdown || result?.periodBreakdown || [];
-  const source = selectedPeriods.length > 0 ? selectedPeriods : periods;
-  return source.map((period, index) => {
-    const loadedKm = nullableCost(
-      period.loadedKm ?? period.loadedRevenueKm ?? period.loaded_km
-    );
-    const cost = periodTotalCost(period);
-
-    return {
-      cost,
-      end: period.periodEnd ?? period.period_end ?? null,
-      index,
-      loadedKm,
-      start: period.periodStart ?? period.period_start ?? null,
-      status:
-        period.dataStatus ??
-        period.data_status ??
-        period.status ??
-        "planned"
-    };
-  });
-}
-
-function periodTotalCost(period) {
-  const direct = nullableCost(
-    period.periodTotalCost ?? period.totalAnnualCost ?? period.totalCost
-  );
-  if (direct > 0) return direct;
-
-  return periodCostFields.reduce(
-    (sum, [field]) => sum + nullableCost(period[field]),
-    0
-  );
-}
-
-function periodVisualKey(period) {
-  return [
-    period.start ?? period.periodStart ?? period.period_start ?? "",
-    period.end ?? period.periodEnd ?? period.period_end ?? "",
-    period.status ?? period.dataStatus ?? period.data_status ?? ""
-  ].join("|");
-}
-
-function shortPeriodLabel(period, index) {
-  if (!period.start && !period.end) return `P${index + 1}`;
-  const start = period.start ? shortDateLabel(period.start) : "n/a";
-  const end = period.end ? shortDateLabel(period.end) : null;
-  return end && end !== start ? `${start} - ${end}` : start;
-}
-
-function shortDateLabel(value) {
-  return new Date(`${value}T00:00:00Z`).toLocaleDateString(
-    activeFormatContext.locale,
-    { month: "short" }
-  );
-}
-
-function periodOverlapsMonth(period, year, monthIndex) {
-  if (!period.start && !period.end) return false;
-  const monthStartDate = new Date(Date.UTC(year, monthIndex, 1));
-  const monthEndDate = new Date(Date.UTC(year, monthIndex + 1, 0));
-  const start = parseDateOnly(period.start || period.end);
-  const end = parseDateOnly(period.end || period.start);
-  if (!start || !end) return false;
-  return start <= monthEndDate && end >= monthStartDate;
-}
-
-function inferYearFromPeriods(periods = []) {
-  const datedPeriod = periods.find((period) => period.periodStart || period.periodEnd);
-  const date = datedPeriod?.periodStart || datedPeriod?.periodEnd;
-  return date ? Number(String(date).slice(0, 4)) : null;
-}
-
-function parseDateOnly(value) {
-  if (!value) return null;
-  const date = new Date(`${value}T00:00:00Z`);
-  return Number.isNaN(date.valueOf()) ? null : date;
-}
-
-function nullableCost(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : 0;
-}
-
-function barPercent(value, maxValue) {
-  if (!(maxValue > 0) || !(value > 0)) return 0;
-  return Math.max(3, Math.min(100, (value / maxValue) * 100));
-}
-
-function safeCalculateBreakEven(payload) {
+ function safeCalculateBreakEven(payload) {
   try {
     return calculateBreakEven(payload);
   } catch {
@@ -3264,30 +2923,6 @@ function titleCase(value) {
   return String(value || "")
     .replaceAll("_", " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-async function apiRequest(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: options.method || "GET",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined
-  });
-
-  if (!response.ok) {
-    let errorMessage = `HTTP ${response.status}`;
-    try {
-      const payload = await response.json();
-      errorMessage = payload.error?.message || errorMessage;
-    } catch {
-      // Keep the HTTP status message.
-    }
-    throw new Error(errorMessage);
-  }
-
-  if (response.status === 204) return null;
-  return response.json();
 }
 
 function normalizedPreviewInput(input, vehicles = []) {

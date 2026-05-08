@@ -82,3 +82,34 @@ test("calculation runs can be saved, listed, opened and deleted", async () => {
     )
   );
 });
+
+test("memory calculation runs are scoped by workspace", async () => {
+  const workspaceA = {
+    actor: "a@example.com",
+    actorUserId: "user-a",
+    workspaceId: "workspace-a",
+    workspaceName: "Workspace A"
+  };
+  const workspaceB = {
+    actor: "b@example.com",
+    actorUserId: "user-b",
+    workspaceId: "workspace-b",
+    workspaceName: "Workspace B"
+  };
+  const saved = await saveCalculationRun(
+    {
+      runName: "Scoped run",
+      inputSnapshot: { countryId: 1 },
+      taxSnapshot: { countryName: "Austria" },
+      resultSnapshot: { breakEvenPerLoadedKm: 1.4 }
+    },
+    workspaceA
+  );
+
+  assert.equal((await getCalculationRun(saved.id, workspaceA)).id, saved.id);
+  assert.equal(await getCalculationRun(saved.id, workspaceB), null);
+  assert.equal(
+    (await listCalculationRuns(workspaceB)).some((run) => run.id === saved.id),
+    false
+  );
+});

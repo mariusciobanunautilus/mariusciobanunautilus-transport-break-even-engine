@@ -324,9 +324,13 @@ function mapTaxProfile(row, country) {
     sourceName: row.source_name || "Seeded modelling defaults",
     sourceUrl: row.source_urls,
     sourceDate: row.source_as_of || row.as_of,
+    lastReviewedAt: row.last_reviewed_at || row.as_of,
     validFrom: row.valid_from || row.as_of,
     validTo: row.valid_to,
-    status: row.rule_status || "indicative"
+    status: row.rule_status || "indicative",
+    confidenceLevel: row.confidence_level || "medium",
+    reviewStatus: row.review_status || "needs_review",
+    overrideReason: row.override_reason || ""
   };
 }
 

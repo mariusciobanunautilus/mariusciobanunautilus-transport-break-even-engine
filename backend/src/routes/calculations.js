@@ -14,6 +14,8 @@ import {
   getTaxProfile,
   getVehicleClasses
 } from "../referenceRepository.js";
+import { authContext, requireAdmin } from "../auth.js";
+import { sendApiError } from "../apiError.js";
 import {
   deleteCalculationRun,
   getCalculationRun,
@@ -21,6 +23,11 @@ import {
   listCalculationRuns,
   saveCalculationRun
 } from "../storage.js";
+import {
+  requirePositiveId,
+  validateCalculationPayload,
+  validateTaxProfileQuery
+} from "../validation.js";
 
 const router = express.Router();
 
@@ -45,6 +52,7 @@ router.get("/countries", async (req, res) => {
 
 router.get("/countries/:countryId/company-types", async (req, res) => {
   try {
+    requirePositiveId(req.params.countryId, "countryId");
     res.json(await getCompanyTypesForCountry(req.params.countryId));
   } catch (error) {
     sendApiError(res, error);
@@ -69,6 +77,7 @@ router.get("/vehicle-classes", async (req, res) => {
 
 router.get("/tax-profile", async (req, res) => {
   try {
+    validateTaxProfileQuery(req.query);
     res.json(await getTaxProfile(req.query));
   } catch (error) {
     sendApiError(res, error);
@@ -77,7 +86,8 @@ router.get("/tax-profile", async (req, res) => {
 
 router.post("/calculations/preview", (req, res) => {
   try {
-    res.json(calculateBreakEven(req.body || {}));
+    const payload = validateCalculationPayload(req.body || {});
+    res.json(calculateBreakEven(payload));
   } catch (error) {
     sendApiError(res, error);
   }
@@ -85,7 +95,8 @@ router.post("/calculations/preview", (req, res) => {
 
 router.post("/pricing-scenarios/preview", (req, res) => {
   try {
-    res.json(generatePricingScenarios(req.body || {}));
+    const payload = validateCalculationPayload(req.body || {});
+    res.json(generatePricingScenarios(payload));
   } catch (error) {
     sendApiError(res, error);
   }
@@ -93,7 +104,8 @@ router.post("/pricing-scenarios/preview", (req, res) => {
 
 router.post("/sensitivity/preview", (req, res) => {
   try {
-    res.json(generateSensitivity(req.body || {}));
+    const payload = validateCalculationPayload(req.body || {});
+    res.json(generateSensitivity(payload));
   } catch (error) {
     sendApiError(res, error);
   }
@@ -101,8 +113,11 @@ router.post("/sensitivity/preview", (req, res) => {
 
 router.post("/calculations", async (req, res) => {
   try {
-    if (isLegacyCalculationRequest(req.body)) {
-      const result = computeTransportEngine(req.body || {});
+    const context = authContext(req);
+    const payload = validateCalculationPayload(req.body || {});
+
+    if (isLegacyCalculationRequest(payload)) {
+      const result = computeTransportEngine(payload);
       const savedRun = await saveCalculationRun({
         profile: result.profile.code,
         jurisdiction: result.jurisdiction.code,
@@ -110,8 +125,11 @@ router.post("/calculations", async (req, res) => {
         businessModel: result.cascade.businessModel,
         inputs: result.inputs,
         outputs: result,
-        runName: req.body?.runName
-      });
+        runName: payload.runName,
+        createdBy: context.actor,
+        createdByUserId: context.actorUserId,
+        workspaceId: context.workspaceId
+      }, context);
 
       res.json({
         calculationRunId: savedRun.id,
@@ -121,10 +139,10 @@ router.post("/calculations", async (req, res) => {
       return;
     }
 
-    const calculation = calculateBreakEven(req.body || {});
-    const pricingScenarios = generatePricingScenarios(req.body || {});
+    const calculation = calculateBreakEven(payload);
+    const pricingScenarios = generatePricingScenarios(payload);
     const savedRun = await saveCalculationRun({
-      runName: req.body?.runName,
+      runName: payload.runName,
       inputSnapshot: calculation.input,
       taxSnapshot: calculation.taxProfile,
       vehicleSnapshot: calculation.vehicleSnapshot,
@@ -138,8 +156,10 @@ router.post("/calculations", async (req, res) => {
       engineVersion: calculation.engineVersion,
       scenarioName: calculation.scenarioName,
       scenarioVersion: calculation.scenarioVersion,
-      createdBy: req.body?.createdBy
-    });
+      createdBy: context.actor,
+      createdByUserId: context.actorUserId,
+      workspaceId: context.workspaceId
+    }, context);
 
     res.status(201).json({
       calculationRunId: savedRun.id,
@@ -160,72 +180,97 @@ router.post("/calculations", async (req, res) => {
 });
 
 router.get("/calculations", async (req, res) => {
-  res.json(await listCalculationRuns());
+  try {
+    res.json(await listCalculationRuns(authContext(req)));
+  } catch (error) {
+    sendApiError(res, error);
+  }
 });
 
 router.get("/calculations/:id", async (req, res) => {
-  const run = await getCalculationRun(req.params.id);
-  if (!run) {
-    res.status(404).json({
-      error: {
-        code: "NOT_FOUND",
-        message: "Calculation run not found",
-        field: "id"
-      }
-    });
-    return;
-  }
+  try {
+    const id = requirePositiveId(req.params.id);
+    const run = await getCalculationRun(id, authContext(req));
+    if (!run) {
+      res.status(404).json({
+        error: {
+          code: "NOT_FOUND",
+          message: "Calculation run not found",
+          field: "id"
+        }
+      });
+      return;
+    }
 
-  res.json(run);
+    res.json(run);
+  } catch (error) {
+    sendApiError(res, error);
+  }
 });
 
 router.delete("/calculations/:id", async (req, res) => {
-  const deleted = await deleteCalculationRun(req.params.id, req.body?.actor);
-  if (!deleted) {
-    res.status(404).json({
-      error: {
-        code: "NOT_FOUND",
-        message: "Calculation run not found",
-        field: "id"
-      }
-    });
-    return;
-  }
+  try {
+    const id = requirePositiveId(req.params.id);
+    const deleted = await deleteCalculationRun(id, authContext(req));
+    if (!deleted) {
+      res.status(404).json({
+        error: {
+          code: "NOT_FOUND",
+          message: "Calculation run not found",
+          field: "id"
+        }
+      });
+      return;
+    }
 
-  res.status(204).end();
+    res.status(204).end();
+  } catch (error) {
+    sendApiError(res, error);
+  }
 });
 
 router.get("/exports/:calculationRunId/json", async (req, res) => {
-  const run = await getCalculationRun(req.params.calculationRunId);
-  if (!run) {
-    res.status(404).json({
-      error: {
-        code: "NOT_FOUND",
-        message: "Calculation run not found",
-        field: "calculationRunId"
-      }
-    });
-    return;
-  }
+  try {
+    const id = requirePositiveId(req.params.calculationRunId, "calculationRunId");
+    const run = await getCalculationRun(id, authContext(req));
+    if (!run) {
+      res.status(404).json({
+        error: {
+          code: "NOT_FOUND",
+          message: "Calculation run not found",
+          field: "calculationRunId"
+        }
+      });
+      return;
+    }
 
-  res.json({
-    exportedAt: new Date().toISOString(),
-    disclaimer:
-      "The tax profile is a modelling layer for business planning. It is not tax advice.",
-    run
-  });
+    res.json({
+      exportedAt: new Date().toISOString(),
+      disclaimer:
+        "The tax profile is a modelling layer for business planning. It is not tax advice.",
+      run
+    });
+  } catch (error) {
+    sendApiError(res, error);
+  }
 });
 
-router.get("/audit-log", async (req, res) => {
-  res.json(await listAuditEvents());
+router.get("/audit-log", requireAdmin, async (req, res) => {
+  try {
+    res.json(await listAuditEvents(authContext(req)));
+  } catch (error) {
+    sendApiError(res, error);
+  }
 });
 
 router.post("/vehicles/:profile/calculations", async (req, res) => {
   try {
+    const context = authContext(req);
+    const payload = validateCalculationPayload(req.body || {});
     const result = computeTransportEngine({
-      ...(req.body || {}),
+      ...payload,
       profileCode: String(req.params.profile || "").toUpperCase(),
-      inputs: req.body?.inputs || req.body?.overrides || {}
+      inputs: payload.inputs || payload.overrides || {}
     });
 
     const savedRun = await saveCalculationRun({
@@ -235,8 +280,11 @@ router.post("/vehicles/:profile/calculations", async (req, res) => {
       businessModel: result.cascade.businessModel,
       inputs: result.inputs,
       outputs: result,
-      runName: req.body?.runName
-    });
+      runName: payload.runName,
+      createdBy: context.actor,
+      createdByUserId: context.actorUserId,
+      workspaceId: context.workspaceId
+    }, context);
 
     res.json({
       calculationRunId: savedRun.id,
@@ -252,15 +300,4 @@ export default router;
 
 function isLegacyCalculationRequest(body = {}) {
   return Boolean(body.profileCode || body.inputs || body.overrides);
-}
-
-function sendApiError(res, error) {
-  const status = error.code === "VALIDATION_ERROR" ? 400 : 500;
-  res.status(status).json({
-    error: {
-      code: error.code || "INTERNAL_ERROR",
-      message: error.message || "Unexpected error",
-      field: error.field
-    }
-  });
 }

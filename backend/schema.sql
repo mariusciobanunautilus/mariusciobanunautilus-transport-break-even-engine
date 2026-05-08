@@ -6,6 +6,40 @@ CREATE TABLE IF NOT EXISTS jurisdictions (
   modelling_note TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS workspaces (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id BIGSERIAL PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (status IN ('active', 'disabled'))
+);
+
+CREATE TABLE IF NOT EXISTS workspace_memberships (
+  workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL DEFAULT 'member',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (workspace_id, user_id),
+  CHECK (role IN ('admin', 'member'))
+);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS tax_rules (
   jurisdiction_code TEXT PRIMARY KEY REFERENCES jurisdictions(code),
   default_vat_registered BOOLEAN NOT NULL,
@@ -83,14 +117,19 @@ ALTER TABLE tax_rules
   ADD COLUMN IF NOT EXISTS last_reviewed_at DATE,
   ADD COLUMN IF NOT EXISTS valid_from DATE,
   ADD COLUMN IF NOT EXISTS valid_to DATE,
-  ADD COLUMN IF NOT EXISTS rule_status TEXT DEFAULT 'indicative';
+  ADD COLUMN IF NOT EXISTS rule_status TEXT DEFAULT 'indicative',
+  ADD COLUMN IF NOT EXISTS confidence_level TEXT DEFAULT 'medium',
+  ADD COLUMN IF NOT EXISTS review_status TEXT DEFAULT 'needs_review',
+  ADD COLUMN IF NOT EXISTS override_reason TEXT;
 
 ALTER TABLE calculation_runs
+  ADD COLUMN IF NOT EXISTS workspace_id BIGINT REFERENCES workspaces(id),
   ADD COLUMN IF NOT EXISTS run_name TEXT,
   ADD COLUMN IF NOT EXISTS input_snapshot JSONB,
   ADD COLUMN IF NOT EXISTS tax_snapshot JSONB,
   ADD COLUMN IF NOT EXISTS vehicle_snapshot JSONB,
   ADD COLUMN IF NOT EXISTS created_by TEXT,
+  ADD COLUMN IF NOT EXISTS created_by_user_id BIGINT REFERENCES users(id),
   ADD COLUMN IF NOT EXISTS calculation_mode TEXT DEFAULT 'snapshot',
   ADD COLUMN IF NOT EXISTS plan_year INTEGER,
   ADD COLUMN IF NOT EXISTS as_of_date DATE,
@@ -100,6 +139,17 @@ ALTER TABLE calculation_runs
   ADD COLUMN IF NOT EXISTS scenario_version INTEGER DEFAULT 1,
   ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS approved_by TEXT;
+
+INSERT INTO workspaces (name)
+VALUES ('Default Workspace')
+ON CONFLICT (name) DO NOTHING;
+
+UPDATE calculation_runs
+SET workspace_id = (SELECT id FROM workspaces WHERE name = 'Default Workspace')
+WHERE workspace_id IS NULL;
+
+ALTER TABLE calculation_runs
+  ALTER COLUMN workspace_id SET NOT NULL;
 
 DO $$
 BEGIN
@@ -177,13 +227,35 @@ CREATE TABLE IF NOT EXISTS pricing_scenarios (
 CREATE TABLE IF NOT EXISTS audit_log (
   id BIGSERIAL PRIMARY KEY,
   actor TEXT,
+  actor_user_id BIGINT REFERENCES users(id),
   action TEXT NOT NULL,
   entity_type TEXT,
   entity_id TEXT,
+  workspace_id BIGINT REFERENCES workspaces(id),
   before_snapshot JSONB,
   after_snapshot JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE audit_log
+  ADD COLUMN IF NOT EXISTS actor_user_id BIGINT REFERENCES users(id),
+  ADD COLUMN IF NOT EXISTS workspace_id BIGINT REFERENCES workspaces(id);
+
+UPDATE audit_log
+SET workspace_id = (SELECT id FROM workspaces WHERE name = 'Default Workspace')
+WHERE workspace_id IS NULL;
+
+ALTER TABLE audit_log
+  ALTER COLUMN workspace_id SET NOT NULL;
+
+CREATE INDEX IF NOT EXISTS calculation_runs_workspace_created_at_idx
+  ON calculation_runs (workspace_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS audit_log_workspace_created_at_idx
+  ON audit_log (workspace_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS auth_sessions_expires_at_idx
+  ON auth_sessions (expires_at);
 
 INSERT INTO jurisdictions (code, name, currency, as_of, modelling_note) VALUES
   ('AT', 'Austria', 'EUR', '2026-05', 'Corporate rate used for GmbH/AG. Sole traders need separate validation.'),
@@ -241,7 +313,9 @@ SET
   source_as_of = COALESCE(tr.source_as_of, TO_DATE(j.as_of || '-01', 'YYYY-MM-DD')),
   last_reviewed_at = COALESCE(tr.last_reviewed_at, TO_DATE(j.as_of || '-01', 'YYYY-MM-DD')),
   valid_from = COALESCE(tr.valid_from, TO_DATE(j.as_of || '-01', 'YYYY-MM-DD')),
-  rule_status = COALESCE(tr.rule_status, 'indicative')
+  rule_status = COALESCE(tr.rule_status, 'indicative'),
+  confidence_level = COALESCE(tr.confidence_level, 'medium'),
+  review_status = COALESCE(tr.review_status, 'needs_review')
 FROM jurisdictions j
 WHERE j.code = tr.jurisdiction_code;
 

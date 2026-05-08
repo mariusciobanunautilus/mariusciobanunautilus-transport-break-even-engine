@@ -4,23 +4,33 @@ let nextMemoryId = 1;
 const memoryRuns = new Map();
 const memoryAuditEvents = [];
 
-export async function saveCalculationRun(record) {
-  const run = normalizeRunRecord(record);
+export async function saveCalculationRun(record, context = {}) {
+  const storageContext = normalizeStorageContext(context, record);
+  const run = normalizeRunRecord({
+    ...record,
+    createdBy: record.createdBy ?? storageContext.actor,
+    createdByUserId: record.createdByUserId ?? storageContext.actorUserId,
+    workspaceId: record.workspaceId ?? storageContext.workspaceId
+  });
 
   if (!hasDatabaseUrl()) {
     return saveMemoryRun(run);
   }
 
-  return saveDatabaseRun(run);
+  return saveDatabaseRun(run, storageContext);
 }
 
-export async function listCalculationRuns() {
+export async function listCalculationRuns(context = {}) {
+  const storageContext = normalizeStorageContext(context);
+
   if (!hasDatabaseUrl()) {
     return Array.from(memoryRuns.values())
+      .filter((run) => run.workspaceId === storageContext.workspaceId)
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
       .map(toRunListItem);
   }
 
+  assertWorkspaceContext(storageContext);
   const result = await query(
     `SELECT
        cr.*,
@@ -33,82 +43,110 @@ export async function listCalculationRuns() {
        ORDER BY id DESC
        LIMIT 1
      ) latest_result ON TRUE
+     WHERE cr.workspace_id = $1
      ORDER BY cr.created_at DESC`
+    ,
+    [storageContext.workspaceId]
   );
 
   return result.rows.map((row) => toRunListItem(mapRunRow(row)));
 }
 
-export async function getCalculationRun(id) {
+export async function getCalculationRun(id, context = {}) {
+  const storageContext = normalizeStorageContext(context);
+
   if (!hasDatabaseUrl()) {
-    return memoryRuns.get(String(id)) ?? null;
+    const run = memoryRuns.get(String(id)) ?? null;
+    return run?.workspaceId === storageContext.workspaceId ? run : null;
   }
 
-  return getDatabaseRun(id);
+  assertWorkspaceContext(storageContext);
+  return getDatabaseRun(id, storageContext);
 }
 
-export async function deleteCalculationRun(id, actor = "system") {
+export async function deleteCalculationRun(id, context = {}) {
+  const storageContext = normalizeStorageContext(context);
+
   if (!hasDatabaseUrl()) {
     const run = memoryRuns.get(String(id));
-    if (!run) return false;
+    if (!run || run.workspaceId !== storageContext.workspaceId) return false;
 
     memoryRuns.delete(String(id));
     appendMemoryAuditEvent({
-      actor,
+      actor: storageContext.actor,
+      actorUserId: storageContext.actorUserId,
       action: "CALCULATION_DELETED",
       entityType: "calculation_run",
       entityId: String(id),
-      before: run
+      before: run,
+      workspaceId: storageContext.workspaceId
     });
     return true;
   }
 
+  assertWorkspaceContext(storageContext);
   return withTransaction(async (client) => {
-    const run = await getDatabaseRun(id, client);
+    const run = await getDatabaseRun(id, storageContext, client);
     if (!run) return false;
 
-    await client.query("DELETE FROM calculation_runs WHERE id = $1", [id]);
+    await client.query(
+      "DELETE FROM calculation_runs WHERE id = $1 AND workspace_id = $2",
+      [id, storageContext.workspaceId]
+    );
     await insertAuditEvent(
       client,
       {
-        actor,
+        actor: storageContext.actor,
+        actorUserId: storageContext.actorUserId,
         action: "CALCULATION_DELETED",
         entityType: "calculation_run",
         entityId: String(id),
-        before: run
-      }
+        before: run,
+        workspaceId: storageContext.workspaceId
+      },
+      storageContext
     );
     return true;
   });
 }
 
-export async function listAuditEvents() {
+export async function listAuditEvents(context = {}) {
+  const storageContext = normalizeStorageContext(context);
+
   if (!hasDatabaseUrl()) {
-    return [...memoryAuditEvents].sort((left, right) =>
-      right.createdAt.localeCompare(left.createdAt)
-    );
+    return [...memoryAuditEvents]
+      .filter((event) => event.workspaceId === storageContext.workspaceId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
+  assertWorkspaceContext(storageContext);
   const result = await query(
     `SELECT
        id,
        actor,
+       actor_user_id,
        action,
        entity_type,
        entity_id,
+       workspace_id,
        before_snapshot,
        after_snapshot,
        created_at
      FROM audit_log
+     WHERE workspace_id = $1
      ORDER BY created_at DESC, id DESC`
+    ,
+    [storageContext.workspaceId]
   );
 
   return result.rows.map((row) => ({
     id: String(row.id),
     actor: row.actor,
+    actorUserId: row.actor_user_id ? String(row.actor_user_id) : null,
     action: row.action,
     entityType: row.entity_type,
     entityId: row.entity_id,
+    workspaceId: row.workspace_id ? String(row.workspace_id) : null,
     beforeSnapshot: row.before_snapshot,
     afterSnapshot: row.after_snapshot,
     createdAt: toIso(row.created_at)
@@ -125,22 +163,25 @@ function saveMemoryRun(run) {
   memoryRuns.set(String(savedRun.id), savedRun);
   appendMemoryAuditEvent({
     actor: savedRun.createdBy,
+    actorUserId: savedRun.createdByUserId,
     action: "CALCULATION_SAVED",
     entityType: "calculation_run",
     entityId: String(savedRun.id),
-    after: savedRun
+    after: savedRun,
+    workspaceId: savedRun.workspaceId
   });
 
   return savedRun;
 }
 
-async function saveDatabaseRun(run) {
+async function saveDatabaseRun(run, context) {
   return withTransaction(async (client) => {
     const outputSnapshot = buildOutputSnapshot(run);
     const inserted = await client.query(
       `INSERT INTO calculation_runs (
          profile_code,
          jurisdiction_code,
+         workspace_id,
          company_type,
          business_model,
          inputs,
@@ -150,6 +191,7 @@ async function saveDatabaseRun(run) {
          tax_snapshot,
          vehicle_snapshot,
          created_by,
+         created_by_user_id,
          calculation_mode,
          plan_year,
          as_of_date,
@@ -160,11 +202,14 @@ async function saveDatabaseRun(run) {
          approved_at,
          approved_by
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+         $21, $22)
        RETURNING id, created_at`,
       [
         databaseProfileCode(run.profile),
         run.jurisdiction,
+        context.workspaceId,
         run.companyType,
         run.businessModel,
         run.inputSnapshot,
@@ -174,6 +219,7 @@ async function saveDatabaseRun(run) {
         run.taxSnapshot,
         run.vehicleSnapshot,
         run.createdBy,
+        run.createdByUserId,
         run.calculationMode,
         run.planYear,
         run.asOfDate,
@@ -230,17 +276,19 @@ async function saveDatabaseRun(run) {
 
     await insertAuditEvent(client, {
       actor: savedRun.createdBy,
+      actorUserId: savedRun.createdByUserId,
       action: "CALCULATION_SAVED",
       entityType: "calculation_run",
       entityId: savedRun.id,
-      after: savedRun
-    });
+      after: savedRun,
+      workspaceId: savedRun.workspaceId
+    }, context);
 
     return savedRun;
   });
 }
 
-async function getDatabaseRun(id, client = null) {
+async function getDatabaseRun(id, context, client = null) {
   const executor = client ?? { query };
   const result = await executor.query(
     `SELECT
@@ -254,9 +302,9 @@ async function getDatabaseRun(id, client = null) {
        ORDER BY id DESC
        LIMIT 1
      ) latest_result ON TRUE
-     WHERE cr.id = $1
+     WHERE cr.id = $1 AND cr.workspace_id = $2
      LIMIT 1`,
-    [id]
+    [id, context.workspaceId]
   );
 
   if (!result.rows[0]) return null;
@@ -432,6 +480,10 @@ function normalizeRunRecord(record) {
       record.scenarioVersion ?? record.scenario_version ?? 1,
     approvedAt: record.approvedAt ?? record.approved_at ?? null,
     approvedBy: record.approvedBy ?? record.approved_by ?? null,
+    workspaceId: String(record.workspaceId ?? record.workspace_id ?? "local-workspace"),
+    createdByUserId: nullableString(
+      record.createdByUserId ?? record.created_by_user_id
+    ),
     createdBy: record.createdBy ?? record.actor ?? "local-user",
     createdAt: record.createdAt ?? now
   };
@@ -464,6 +516,8 @@ function mapRunRow(row) {
     scenarioVersion: row.scenario_version ?? outputSnapshot.scenarioVersion ?? 1,
     approvedAt: toIso(row.approved_at),
     approvedBy: row.approved_by ?? null,
+    workspaceId: row.workspace_id ? String(row.workspace_id) : null,
+    createdByUserId: row.created_by_user_id ? String(row.created_by_user_id) : null,
     createdBy: row.created_by ?? "local-user",
     createdAt: toIso(row.created_at)
   };
@@ -492,6 +546,8 @@ function toRunListItem(run) {
     inputSnapshot: run.inputSnapshot,
     taxSnapshot: run.taxSnapshot,
     vehicleSnapshot: run.vehicleSnapshot,
+    workspaceId: run.workspaceId,
+    createdBy: run.createdBy,
     createdAt: run.createdAt
   };
 }
@@ -523,27 +579,33 @@ function mapScenarioPeriodRow(row) {
 
 async function insertAuditEvent(client, {
   actor = "system",
+  actorUserId = null,
   action,
   entityType,
   entityId,
   before,
-  after
-}) {
+  after,
+  workspaceId = null
+}, context = {}) {
   await client.query(
     `INSERT INTO audit_log (
        actor,
+       actor_user_id,
        action,
        entity_type,
        entity_id,
+       workspace_id,
        before_snapshot,
        after_snapshot
      )
-     VALUES ($1, $2, $3, $4, $5, $6)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
     [
       actor,
+      actorUserId ?? context.actorUserId ?? null,
       action,
       entityType,
       entityId,
+      workspaceId ?? context.workspaceId,
       before ?? null,
       after ?? null
     ]
@@ -552,18 +614,22 @@ async function insertAuditEvent(client, {
 
 function appendMemoryAuditEvent({
   actor = "system",
+  actorUserId = null,
   action,
   entityType,
   entityId,
   before,
-  after
+  after,
+  workspaceId = "local-workspace"
 }) {
   memoryAuditEvents.push({
     id: String(memoryAuditEvents.length + 1),
     actor,
+    actorUserId,
     action,
     entityType,
     entityId,
+    workspaceId,
     beforeSnapshot: before ?? null,
     afterSnapshot: after ?? null,
     createdAt: new Date().toISOString()
@@ -608,6 +674,36 @@ function businessModelNameFromInput(input) {
   return names[Number(input.businessModelId) - 1] ?? null;
 }
 
+function normalizeStorageContext(context = {}, record = {}) {
+  if (typeof context === "string") {
+    return {
+      actor: context,
+      actorUserId: null,
+      workspaceId: String(record.workspaceId ?? "local-workspace"),
+      workspaceName: record.workspaceName ?? "Local Workspace",
+      role: "member"
+    };
+  }
+
+  return {
+    actor: context.actor ?? record.createdBy ?? record.actor ?? "local-user",
+    actorUserId:
+      context.actorUserId ?? record.createdByUserId ?? record.actorUserId ?? null,
+    workspaceId: String(
+      context.workspaceId ?? record.workspaceId ?? record.workspace_id ?? "local-workspace"
+    ),
+    workspaceName:
+      context.workspaceName ?? record.workspaceName ?? "Local Workspace",
+    role: context.role ?? "member"
+  };
+}
+
+function assertWorkspaceContext(context) {
+  if (!context.workspaceId) {
+    throw new Error("Workspace context is required for persistent storage.");
+  }
+}
+
 function toIso(value) {
   if (value == null) return null;
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -620,4 +716,8 @@ function dateOnly(value) {
 
 function nullableNumber(value) {
   return value == null ? null : Number(value);
+}
+
+function nullableString(value) {
+  return value == null ? null : String(value);
 }

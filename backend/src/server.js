@@ -1,15 +1,26 @@
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
+import { apiErrorHandler } from "./apiError.js";
+import { authenticateRequest, bootstrapAuth } from "./auth.js";
+import { corsOptions, serverHost, serverPort, validateRuntimeConfig } from "./config.js";
+import authRouter from "./routes/auth.js";
 import calculationsRouter from "./routes/calculations.js";
+import usersRouter from "./routes/users.js";
+import { securityHeaders } from "./security.js";
 
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 10000;
-const host = process.env.HOST || "127.0.0.1";
+const port = serverPort();
+const host = serverHost();
 
-app.use(cors());
+validateRuntimeConfig();
+await bootstrapAuth();
+
+app.disable("x-powered-by");
+app.use(securityHeaders);
+app.use(cors(corsOptions()));
 app.use(express.json({ limit: "1mb" }));
 
 app.use((error, req, res, next) => {
@@ -35,21 +46,16 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+app.use("/api/auth", authRouter);
+app.use("/api/users", authenticateRequest, usersRouter);
+app.use("/api", authenticateRequest);
 app.use("/api", calculationsRouter);
 
 app.get("/", (req, res) => {
   res.send("transport break-even engine backend is running");
 });
 
-app.use((error, req, res, next) => {
-  console.error("[api] unhandled error:", error);
-  res.status(500).json({
-    error: {
-      code: "INTERNAL_ERROR",
-      message: "Unexpected server error"
-    }
-  });
-});
+app.use(apiErrorHandler);
 
 app.listen(port, host, () => {
   console.log(
