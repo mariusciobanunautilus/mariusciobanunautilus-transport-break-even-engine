@@ -9,10 +9,6 @@ export function validateRuntimeConfig(env = process.env) {
   if (env.NODE_ENV === "production" && !env.DATABASE_URL) {
     throw new Error("DATABASE_URL is required when NODE_ENV=production.");
   }
-
-  if (env.NODE_ENV === "production" && !env.CORS_ORIGIN) {
-    throw new Error("CORS_ORIGIN is required when NODE_ENV=production.");
-  }
 }
 
 export function serverHost(env = process.env) {
@@ -28,9 +24,13 @@ export function corsOrigins(env = process.env) {
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
+  const renderOrigin = String(env.RENDER_EXTERNAL_URL || "").trim();
+  const productionOrigins = renderOrigin
+    ? [...configured, renderOrigin]
+    : configured;
 
   if (env.NODE_ENV === "production") {
-    return configured;
+    return [...new Set(productionOrigins)];
   }
 
   return [...new Set([...configured, ...developmentOrigins])];

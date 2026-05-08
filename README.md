@@ -131,7 +131,7 @@ When `DATABASE_URL` is configured, the backend reads reference data from Postgre
 
 When `DATABASE_URL` is not configured, the backend falls back to an in-memory store so local development still works. In-memory users, sessions and saved runs are lost when the backend restarts.
 
-In production, `DATABASE_URL` and `CORS_ORIGIN` are required. The server refuses to start without them. The first workspace admin is bootstrapped from `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `WORKSPACE_NAME` when the database has no users yet.
+In production, `DATABASE_URL` is required. `CORS_ORIGIN` should be set to the frontend origin when the frontend is hosted separately; Render deployments also accept `RENDER_EXTERNAL_URL` as a restricted same-service origin fallback. The first workspace admin is bootstrapped from `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `WORKSPACE_NAME` when the database has no users yet.
 
 The current database layer uses `pg` and `backend/schema.sql`. Prisma/TypeScript migrations are still a future hardening step, but the current app no longer depends on memory storage when Postgres is configured.
 
