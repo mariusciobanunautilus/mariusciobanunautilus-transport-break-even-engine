@@ -135,6 +135,108 @@ select:disabled {
   font-weight: 760;
 }
 
+.password-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.password-input-row input {
+  min-width: 0;
+}
+
+.password-input-row button {
+  min-height: 38px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel-muted);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 0.86rem;
+  font-weight: 760;
+}
+
+.password-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-muted);
+  padding: 10px;
+}
+
+.password-strength {
+  display: grid;
+  gap: 6px;
+}
+
+.password-strength span,
+.password-strength strong {
+  font-size: 0.82rem;
+}
+
+.password-strength span {
+  color: var(--muted);
+  font-weight: 780;
+}
+
+.password-strength strong {
+  color: var(--text);
+}
+
+.password-meter {
+  overflow: hidden;
+  height: 8px;
+  border-radius: 999px;
+  background: #e1e7eb;
+}
+
+.password-meter span {
+  display: block;
+  width: var(--strength);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 160ms ease;
+}
+
+.password-checklist {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.password-checklist li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
+.password-checklist li span {
+  display: inline-grid;
+  place-items: center;
+  min-height: 22px;
+  border-radius: 5px;
+  background: #e7edf0;
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 850;
+}
+
+.password-checklist li.valid {
+  color: var(--text);
+}
+
+.password-checklist li.valid span {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
 .sidebar {
   position: sticky;
   top: 0;

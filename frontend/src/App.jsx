@@ -295,8 +295,12 @@ export default function App() {
       const health = await apiRequest("/api/health");
       setAuthStatus(health.auth || null);
       setAuthMessage("");
-    } catch {
-      setAuthMessage("Could not reach the backend API.");
+    } catch (error) {
+      setAuthMessage(
+        error.status
+          ? `Backend health check failed: ${error.message}`
+          : "Could not reach the backend API. Check the Render service is a Web Service and that production is not pointing at localhost."
+      );
     }
   }
 
@@ -977,8 +981,16 @@ function LoginPage({ message, onSetup, onSignIn, setupRequired }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState(message || "");
+  const newPasswordState = passwordValidationState(password, confirmPassword);
+  const canSubmit =
+    !isSubmitting &&
+    email.trim() &&
+    password &&
+    (!setupRequired || (workspaceName.trim() && newPasswordState.isValid));
 
   useEffect(() => {
     setError(message || "");
@@ -988,6 +1000,12 @@ function LoginPage({ message, onSetup, onSignIn, setupRequired }) {
     event.preventDefault();
     setIsSubmitting(true);
     setError("");
+
+    if (setupRequired && !newPasswordState.isValid) {
+      setError("Complete the password requirements before creating the account.");
+      setIsSubmitting(false);
+      return;
+    }
 
     try {
       if (setupRequired) {
@@ -1036,22 +1054,34 @@ function LoginPage({ message, onSetup, onSignIn, setupRequired }) {
             value={email}
           />
         </label>
-        <label className="text-field">
-          <span>Password</span>
-          <input
-            autoComplete={setupRequired ? "new-password" : "current-password"}
-            onChange={(event) => setPassword(event.target.value)}
-            type="password"
-            value={password}
-          />
-        </label>
+        <PasswordField
+          autoComplete={setupRequired ? "new-password" : "current-password"}
+          label={setupRequired ? "New password" : "Password"}
+          onChange={setPassword}
+          showPassword={showPassword}
+          toggleShowPassword={() => setShowPassword((current) => !current)}
+          value={password}
+        />
+        {setupRequired && (
+          <>
+            <PasswordField
+              autoComplete="new-password"
+              label="Confirm password"
+              onChange={setConfirmPassword}
+              showPassword={showPassword}
+              toggleShowPassword={() => setShowPassword((current) => !current)}
+              value={confirmPassword}
+            />
+            <PasswordChecklist state={newPasswordState} />
+          </>
+        )}
         {error && <div className="auth-error">{error}</div>}
         {!setupRequired && (
           <p className="auth-note">
             New accounts are created by a workspace admin from the Team page.
           </p>
         )}
-        <button className="primary-button" disabled={isSubmitting} type="submit">
+        <button className="primary-button" disabled={!canSubmit} type="submit">
           {isSubmitting
             ? setupRequired ? "Creating..." : "Signing in..."
             : setupRequired ? "Create account" : "Sign in"}
@@ -1069,6 +1099,54 @@ function SessionChip({ onSignOut, session }) {
       <button onClick={onSignOut} type="button">
         Sign out
       </button>
+    </div>
+  );
+}
+
+function PasswordField({
+  autoComplete,
+  label,
+  onChange,
+  showPassword,
+  toggleShowPassword,
+  value
+}) {
+  return (
+    <label className="text-field password-field">
+      <span>{label}</span>
+      <div className="password-input-row">
+        <input
+          autoComplete={autoComplete}
+          onChange={(event) => onChange(event.target.value)}
+          type={showPassword ? "text" : "password"}
+          value={value}
+        />
+        <button onClick={toggleShowPassword} type="button">
+          {showPassword ? "Hide" : "Show"}
+        </button>
+      </div>
+    </label>
+  );
+}
+
+function PasswordChecklist({ state }) {
+  return (
+    <div className="password-panel">
+      <div className="password-strength">
+        <span>Password strength</span>
+        <strong>{state.label}</strong>
+        <div className="password-meter" aria-hidden="true">
+          <span style={{ "--strength": `${state.score * 20}%` }} />
+        </div>
+      </div>
+      <ul className="password-checklist">
+        {state.checks.map((check) => (
+          <li className={check.valid ? "valid" : ""} key={check.label}>
+            <span>{check.valid ? "OK" : "--"}</span>
+            {check.label}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -2128,10 +2206,17 @@ function TeamPage({ createWorkspaceUser, session }) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [role, setRole] = useState("member");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const passwordState = passwordValidationState(password, confirmPassword);
+  const canSubmit =
+    !isSubmitting &&
+    email.trim() &&
+    passwordState.isValid;
 
   if (session.user?.role !== "admin") {
     return (
@@ -2148,12 +2233,19 @@ function TeamPage({ createWorkspaceUser, session }) {
     setNotice("");
     setError("");
 
+    if (!passwordState.isValid) {
+      setError("Complete the password requirements before creating the account.");
+      setIsSubmitting(false);
+      return;
+    }
+
     try {
       const user = await createWorkspaceUser({ email, name, password, role });
       setNotice(`Created ${user.email}`);
       setEmail("");
       setName("");
       setPassword("");
+      setConfirmPassword("");
       setRole("member");
     } catch (nextError) {
       setError(nextError.message || "User creation failed");
@@ -2180,12 +2272,23 @@ function TeamPage({ createWorkspaceUser, session }) {
           <form className="team-form" onSubmit={handleSubmit}>
             <TextField label="Name" onChange={setName} value={name} />
             <TextField label="Email" onChange={setEmail} type="email" value={email} />
-            <TextField
-              label="Temporary password"
+            <PasswordField
+              autoComplete="new-password"
+              label="New password"
               onChange={setPassword}
-              type="password"
+              showPassword={showPassword}
+              toggleShowPassword={() => setShowPassword((current) => !current)}
               value={password}
             />
+            <PasswordField
+              autoComplete="new-password"
+              label="Confirm password"
+              onChange={setConfirmPassword}
+              showPassword={showPassword}
+              toggleShowPassword={() => setShowPassword((current) => !current)}
+              value={confirmPassword}
+            />
+            <PasswordChecklist state={passwordState} />
             <SelectField
               label="Role"
               onChange={setRole}
@@ -2197,7 +2300,7 @@ function TeamPage({ createWorkspaceUser, session }) {
             />
             {notice && <div className="team-notice">{notice}</div>}
             {error && <div className="auth-error">{error}</div>}
-            <button className="primary-button" disabled={isSubmitting} type="submit">
+            <button className="primary-button" disabled={!canSubmit} type="submit">
               {isSubmitting ? "Creating..." : "Create account"}
             </button>
           </form>
@@ -3093,6 +3196,56 @@ function monthStart(year, monthIndex) {
 
 function monthEnd(year, monthIndex) {
   return new Date(Date.UTC(year, monthIndex + 1, 0)).toISOString().slice(0, 10);
+}
+
+function passwordValidationState(password, confirmPassword) {
+  const value = String(password || "");
+  const checks = [
+    {
+      label: "At least 12 characters",
+      valid: value.length >= 12
+    },
+    {
+      label: "Lowercase letter",
+      valid: /[a-z]/.test(value)
+    },
+    {
+      label: "Uppercase letter",
+      valid: /[A-Z]/.test(value)
+    },
+    {
+      label: "Number",
+      valid: /\d/.test(value)
+    },
+    {
+      label: "Symbol",
+      valid: /[^A-Za-z0-9\s]/.test(value)
+    },
+    {
+      label: "No spaces",
+      valid: value.length > 0 && !/\s/.test(value)
+    },
+    {
+      label: "Passwords match",
+      valid: value.length > 0 && value === String(confirmPassword || "")
+    }
+  ];
+  const coreScore = checks.slice(0, 6).filter((check) => check.valid).length;
+  const score = value ? Math.min(5, Math.max(1, coreScore)) : 0;
+
+  return {
+    checks,
+    isValid: checks.every((check) => check.valid),
+    label:
+      coreScore >= 6
+        ? "Strong"
+        : coreScore >= 4
+          ? "Getting there"
+          : value
+            ? "Weak"
+            : "Empty",
+    score
+  };
 }
 
 function friendlyWarning(code) {

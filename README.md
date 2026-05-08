@@ -112,7 +112,7 @@ npm run dev:backend
 Local login defaults without Postgres:
 
 - email: `admin@example.com`
-- password: `admin12345`
+- password: `Admin12345!`
 
 Set `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `WORKSPACE_NAME` in `backend/.env` to override them.
 
@@ -121,6 +121,8 @@ Set `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `WORKSPACE_NAME` in `backend/.env` to ov
 When the database has no users, the login screen switches to first-workspace setup. The first account created there becomes the workspace admin.
 
 After setup, public signup is closed. Admins create additional accounts from the Team page inside the app.
+
+New passwords must be at least 12 characters and include lowercase, uppercase, number and symbol characters.
 
 ## Notes
 

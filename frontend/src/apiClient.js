@@ -1,11 +1,4 @@
-const configuredApi =
-  import.meta.env.VITE_API_BASE ||
-  import.meta.env.VITE_API_URL ||
-  (import.meta.env.DEV
-    ? "http://localhost:10000"
-    : typeof window !== "undefined"
-      ? window.location.origin
-      : "http://localhost:10000");
+const configuredApi = resolveConfiguredApi();
 
 export const API_BASE = configuredApi.replace(/\/api\/?$/, "").replace(/\/$/, "");
 const authStorageKey = "transport-break-even-auth-token";
@@ -77,4 +70,22 @@ function readStoredToken() {
   } catch {
     return "";
   }
+}
+
+function resolveConfiguredApi() {
+  const envApi = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_URL || "";
+  const sameOrigin =
+    typeof window !== "undefined" ? window.location.origin : "http://localhost:10000";
+
+  if (!import.meta.env.DEV && isLocalApiUrl(envApi)) {
+    return sameOrigin;
+  }
+
+  return envApi || (import.meta.env.DEV ? "http://localhost:10000" : sameOrigin);
+}
+
+function isLocalApiUrl(value) {
+  return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?/i.test(
+    String(value || "")
+  );
 }

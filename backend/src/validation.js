@@ -92,11 +92,12 @@ function validateUserPayload(payload) {
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     throw new ApiError(400, "VALIDATION_ERROR", "A valid email is required", "email");
   }
-  if (password.length < 8) {
+  const passwordErrors = passwordValidationErrors(password);
+  if (passwordErrors.length > 0) {
     throw new ApiError(
       400,
       "VALIDATION_ERROR",
-      "Password must be at least 8 characters",
+      `Password must ${passwordErrors.join(", ")}`,
       "password"
     );
   }
@@ -113,4 +114,19 @@ function validateUserPayload(payload) {
 
 export function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
+}
+
+function passwordValidationErrors(password) {
+  const checks = [
+    [password.length >= 12, "be at least 12 characters"],
+    [/[a-z]/.test(password), "include a lowercase letter"],
+    [/[A-Z]/.test(password), "include an uppercase letter"],
+    [/\d/.test(password), "include a number"],
+    [/[^A-Za-z0-9\s]/.test(password), "include a symbol"],
+    [!/\s/.test(password), "not contain spaces"]
+  ];
+
+  return checks
+    .filter(([isValid]) => !isValid)
+    .map(([, message]) => message);
 }

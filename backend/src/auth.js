@@ -230,7 +230,7 @@ function bootstrapMemoryAuth(env) {
   createMemoryUser({
     email,
     name: env.ADMIN_NAME || "Local Admin",
-    passwordHash: hashPassword(env.ADMIN_PASSWORD || env.DEV_AUTH_PASSWORD || "admin12345"),
+    passwordHash: hashPassword(env.ADMIN_PASSWORD || env.DEV_AUTH_PASSWORD || "Admin12345!"),
     role: "admin",
     workspaceId: workspace.id
   });

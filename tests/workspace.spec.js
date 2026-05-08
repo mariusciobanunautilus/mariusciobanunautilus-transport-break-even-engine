@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 async function openWorkspace(page, path = "/") {
   await page.goto(path);
   await page.getByLabel("Email").fill("admin@example.com");
-  await page.getByLabel("Password").fill("admin12345");
+  await page.getByLabel("Password").fill("Admin12345!");
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { name: /pricing workspace/i })).toBeVisible();
 }

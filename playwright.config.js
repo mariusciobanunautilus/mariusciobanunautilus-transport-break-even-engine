@@ -23,7 +23,7 @@ export default defineConfig({
       command: "npm --prefix backend run dev",
       env: {
         ADMIN_EMAIL: "admin@example.com",
-        ADMIN_PASSWORD: "admin12345",
+        ADMIN_PASSWORD: "Admin12345!",
         HOST: "127.0.0.1",
         PORT: "59999",
         WORKSPACE_NAME: "Playwright Workspace"
