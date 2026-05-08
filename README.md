@@ -141,6 +141,8 @@ When `DATABASE_URL` is not configured, the backend falls back to an in-memory st
 
 In production, `DATABASE_URL` is required. `CORS_ORIGIN` should be set to the frontend origin when the frontend is hosted separately; Render deployments also accept `RENDER_EXTERNAL_URL` as a restricted same-service origin fallback. The first workspace admin can be bootstrapped from `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `WORKSPACE_NAME`, or created from the setup form when the database has no users yet. If those admin variables are missing, the service still starts and `/api/health` reports `auth.bootstrapRequired: true`.
 
+For same-service Render deployments, the frontend calls `/api` on the current site. Production builds ignore `VITE_API_BASE` and `VITE_API_URL` unless `VITE_ALLOW_EXTERNAL_API=true` is set, which prevents stale localhost or old Render API URLs from breaking login.
+
 The current database layer uses `pg` and `backend/schema.sql`. Prisma/TypeScript migrations are still a future hardening step, but the current app no longer depends on memory storage when Postgres is configured.
 
 The tax profile is a modelling layer for business planning. It is not tax advice. All country-specific tax and payroll assumptions require review before commercial or statutory use.

@@ -33,11 +33,20 @@ export async function apiRequest(path, options = {}) {
     headers.Authorization = `Bearer ${activeAuthToken}`;
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: options.method || "GET",
-    headers,
-    body: options.body ? JSON.stringify(options.body) : undefined
-  });
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      method: options.method || "GET",
+      headers,
+      body: options.body ? JSON.stringify(options.body) : undefined
+    });
+  } catch (fetchError) {
+    const error = new Error(
+      `Could not reach the API at ${API_BASE || "this site"}${path}`
+    );
+    error.cause = fetchError;
+    throw error;
+  }
 
   if (!response.ok) {
     const error = new Error(`HTTP ${response.status}`);
@@ -74,14 +83,19 @@ function readStoredToken() {
 
 function resolveConfiguredApi() {
   const envApi = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_URL || "";
+  const allowExternalApi = import.meta.env.VITE_ALLOW_EXTERNAL_API === "true";
   const sameOrigin =
     typeof window !== "undefined" ? window.location.origin : "http://localhost:10000";
 
-  if (!import.meta.env.DEV && isLocalApiUrl(envApi)) {
+  if (!import.meta.env.DEV) {
+    if (allowExternalApi && envApi && !isLocalApiUrl(envApi)) {
+      return envApi;
+    }
+
     return sameOrigin;
   }
 
-  return envApi || (import.meta.env.DEV ? "http://localhost:10000" : sameOrigin);
+  return envApi || "http://localhost:10000";
 }
 
 function isLocalApiUrl(value) {
