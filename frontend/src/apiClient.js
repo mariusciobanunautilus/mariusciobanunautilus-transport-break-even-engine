@@ -1,7 +1,11 @@
 const configuredApi =
   import.meta.env.VITE_API_BASE ||
   import.meta.env.VITE_API_URL ||
-  "http://localhost:10000";
+  (import.meta.env.DEV
+    ? "http://localhost:10000"
+    : typeof window !== "undefined"
+      ? window.location.origin
+      : "http://localhost:10000");
 
 export const API_BASE = configuredApi.replace(/\/api\/?$/, "").replace(/\/$/, "");
 const authStorageKey = "transport-break-even-auth-token";

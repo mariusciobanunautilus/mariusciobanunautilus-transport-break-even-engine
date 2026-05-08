@@ -4,7 +4,8 @@ import {
   bootstrapAuth,
   createWorkspaceUser,
   loginUser,
-  logoutUser
+  logoutUser,
+  setupFirstAdmin
 } from "./src/auth.js";
 
 before(async () => {
@@ -57,4 +58,17 @@ test("workspace admins can create member users", async () => {
     password: "operator123"
   });
   assert.equal(memberSession.workspace.id, adminSession.workspace.id);
+});
+
+test("first-admin setup closes after the workspace already has users", async () => {
+  await assert.rejects(
+    () =>
+      setupFirstAdmin({
+        email: "late-admin@example.com",
+        name: "Late Admin",
+        password: "lateadmin123",
+        workspaceName: "Late Workspace"
+      }),
+    /already exists/
+  );
 });

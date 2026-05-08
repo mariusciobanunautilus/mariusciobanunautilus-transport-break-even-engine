@@ -116,6 +116,12 @@ Local login defaults without Postgres:
 
 Set `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `WORKSPACE_NAME` in `backend/.env` to override them.
 
+## Account Creation
+
+When the database has no users, the login screen switches to first-workspace setup. The first account created there becomes the workspace admin.
+
+After setup, public signup is closed. Admins create additional accounts from the Team page inside the app.
+
 ## Notes
 
 The frontend now requires a backend session. Calculation previews still use the shared engine as a local fallback after sign-in if a preview endpoint is temporarily unavailable, but login, saving, history and export require the backend process.
@@ -131,7 +137,7 @@ When `DATABASE_URL` is configured, the backend reads reference data from Postgre
 
 When `DATABASE_URL` is not configured, the backend falls back to an in-memory store so local development still works. In-memory users, sessions and saved runs are lost when the backend restarts.
 
-In production, `DATABASE_URL` is required. `CORS_ORIGIN` should be set to the frontend origin when the frontend is hosted separately; Render deployments also accept `RENDER_EXTERNAL_URL` as a restricted same-service origin fallback. The first workspace admin is bootstrapped from `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `WORKSPACE_NAME` when the database has no users yet. If those admin variables are missing, the service still starts, `/api/health` reports `auth.bootstrapRequired: true`, and login remains locked until the variables are added and the service restarts.
+In production, `DATABASE_URL` is required. `CORS_ORIGIN` should be set to the frontend origin when the frontend is hosted separately; Render deployments also accept `RENDER_EXTERNAL_URL` as a restricted same-service origin fallback. The first workspace admin can be bootstrapped from `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `WORKSPACE_NAME`, or created from the setup form when the database has no users yet. If those admin variables are missing, the service still starts and `/api/health` reports `auth.bootstrapRequired: true`.
 
 The current database layer uses `pg` and `backend/schema.sql`. Prisma/TypeScript migrations are still a future hardening step, but the current app no longer depends on memory storage when Postgres is configured.
 

@@ -102,6 +102,55 @@ export async function loginUser({ email, password }) {
   };
 }
 
+export async function setupFirstAdmin({ email, name, password, workspaceName }) {
+  const normalizedEmail = normalizeEmail(email);
+
+  if (!hasDatabaseUrl()) {
+    if (memoryUsers.size > 0) {
+      throw new ApiError(409, "SETUP_CLOSED", "The first admin account already exists");
+    }
+
+    const workspace = ensureMemoryWorkspace(workspaceName);
+    createMemoryUser({
+      email: normalizedEmail,
+      name,
+      passwordHash: hashPassword(password),
+      role: "admin",
+      workspaceId: workspace.id
+    });
+    return loginUser({ email: normalizedEmail, password });
+  }
+
+  await withTransaction(async (client) => {
+    const userCount = await client.query("SELECT COUNT(*)::INT AS count FROM users");
+    if (Number(userCount.rows[0].count) > 0) {
+      throw new ApiError(409, "SETUP_CLOSED", "The first admin account already exists");
+    }
+
+    const workspaceResult = await client.query(
+      `INSERT INTO workspaces (name)
+       VALUES ($1)
+       ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`,
+      [workspaceName]
+    );
+    const userResult = await client.query(
+      `INSERT INTO users (email, name, password_hash)
+       VALUES ($1, $2, $3)
+       RETURNING id`,
+      [normalizedEmail, name || normalizedEmail, hashPassword(password)]
+    );
+
+    await client.query(
+      `INSERT INTO workspace_memberships (workspace_id, user_id, role)
+       VALUES ($1, $2, 'admin')`,
+      [workspaceResult.rows[0].id, userResult.rows[0].id]
+    );
+  });
+
+  return loginUser({ email: normalizedEmail, password });
+}
+
 export async function logoutUser(token) {
   if (!token) return;
 

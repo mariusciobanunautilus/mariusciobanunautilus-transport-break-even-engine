@@ -21,7 +21,8 @@ const pages = [
   ["pricing", "Pricing"],
   ["sensitivity", "Sensitivity"],
   ["vehicles", "Vehicles"],
-  ["history", "History"]
+  ["history", "History"],
+  ["team", "Team"]
 ];
 
 const inputSections = [
@@ -130,6 +131,7 @@ const metricHelp = {
 
 export default function App() {
   const [session, setSession] = useState(null);
+  const [authStatus, setAuthStatus] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
   const [reference, setReference] = useState(fallbackReference);
@@ -262,11 +264,16 @@ export default function App() {
     : sensitivity;
   const activePageLabel = pages.find(([key]) => key === activePage)?.[1] || "Dashboard";
   const currentCountry = selectedCountry || reference.countries[0];
+  const navigationPages =
+    session?.user?.role === "admin"
+      ? pages
+      : pages.filter(([key]) => key !== "team");
   setActiveFormatContext(currentCountry);
 
   async function restoreSession() {
     const token = getStoredAuthToken();
     if (!token) {
+      await loadAuthStatus();
       setAuthReady(true);
       return;
     }
@@ -274,10 +281,22 @@ export default function App() {
     try {
       const restored = await apiRequest("/api/auth/me");
       setSession(restored);
+      setAuthStatus({ bootstrapRequired: false });
     } catch {
       setApiAuthToken("");
+      await loadAuthStatus();
     } finally {
       setAuthReady(true);
+    }
+  }
+
+  async function loadAuthStatus() {
+    try {
+      const health = await apiRequest("/api/health");
+      setAuthStatus(health.auth || null);
+      setAuthMessage("");
+    } catch {
+      setAuthMessage("Could not reach the backend API.");
     }
   }
 
@@ -293,6 +312,30 @@ export default function App() {
       workspace: nextSession.workspace
     });
     setStatus("Ready");
+  }
+
+  async function createFirstAdmin(payload) {
+    setAuthMessage("");
+    const nextSession = await apiRequest("/api/auth/setup", {
+      method: "POST",
+      body: payload
+    });
+    setApiAuthToken(nextSession.token);
+    setSession({
+      user: nextSession.user,
+      workspace: nextSession.workspace
+    });
+    setAuthStatus({ bootstrapRequired: false });
+    setStatus("Ready");
+  }
+
+  async function createWorkspaceUser(payload) {
+    const response = await apiRequest("/api/users", {
+      method: "POST",
+      body: payload
+    });
+    setStatus(`Created ${response.user.email}`);
+    return response.user;
   }
 
   async function signOut() {
@@ -736,7 +779,14 @@ export default function App() {
   }
 
   if (!session) {
-    return <LoginPage message={authMessage} onSignIn={signIn} />;
+    return (
+      <LoginPage
+        message={authMessage}
+        onSetup={createFirstAdmin}
+        onSignIn={signIn}
+        setupRequired={Boolean(authStatus?.bootstrapRequired)}
+      />
+    );
   }
 
   return (
@@ -747,7 +797,7 @@ export default function App() {
           <h1>Pricing Workspace</h1>
         </div>
         <nav className="page-nav" aria-label="Workflow">
-          {pages.map(([key, label]) => (
+          {navigationPages.map(([key, label]) => (
             <button
               className={activePage === key ? "active" : ""}
               key={key}
@@ -898,6 +948,13 @@ export default function App() {
             onOpen={openRun}
           />
         )}
+
+        {activePage === "team" && (
+          <TeamPage
+            createWorkspaceUser={createWorkspaceUser}
+            session={session}
+          />
+        )}
       </section>
     </main>
   );
@@ -915,11 +972,17 @@ function AuthShell({ message, title }) {
   );
 }
 
-function LoginPage({ message, onSignIn }) {
+function LoginPage({ message, onSetup, onSignIn, setupRequired }) {
+  const [workspaceName, setWorkspaceName] = useState("Transport Workspace");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(message || "");
+
+  useEffect(() => {
+    setError(message || "");
+  }, [message]);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -927,7 +990,11 @@ function LoginPage({ message, onSignIn }) {
     setError("");
 
     try {
-      await onSignIn({ email, password });
+      if (setupRequired) {
+        await onSetup({ email, name, password, workspaceName });
+      } else {
+        await onSignIn({ email, password });
+      }
     } catch (nextError) {
       setError(nextError.message || "Sign in failed");
     } finally {
@@ -939,7 +1006,27 @@ function LoginPage({ message, onSignIn }) {
     <main className="auth-shell">
       <form className="auth-panel" onSubmit={handleSubmit}>
         <p className="eyebrow">Transport Break-even Engine</p>
-        <h1>Sign in to the pricing workspace</h1>
+        <h1>{setupRequired ? "Create the first workspace account" : "Sign in to the pricing workspace"}</h1>
+        {setupRequired && (
+          <>
+            <label className="text-field">
+              <span>Workspace</span>
+              <input
+                autoComplete="organization"
+                onChange={(event) => setWorkspaceName(event.target.value)}
+                value={workspaceName}
+              />
+            </label>
+            <label className="text-field">
+              <span>Name</span>
+              <input
+                autoComplete="name"
+                onChange={(event) => setName(event.target.value)}
+                value={name}
+              />
+            </label>
+          </>
+        )}
         <label className="text-field">
           <span>Email</span>
           <input
@@ -952,15 +1039,22 @@ function LoginPage({ message, onSignIn }) {
         <label className="text-field">
           <span>Password</span>
           <input
-            autoComplete="current-password"
+            autoComplete={setupRequired ? "new-password" : "current-password"}
             onChange={(event) => setPassword(event.target.value)}
             type="password"
             value={password}
           />
         </label>
         {error && <div className="auth-error">{error}</div>}
+        {!setupRequired && (
+          <p className="auth-note">
+            New accounts are created by a workspace admin from the Team page.
+          </p>
+        )}
         <button className="primary-button" disabled={isSubmitting} type="submit">
-          {isSubmitting ? "Signing in..." : "Sign in"}
+          {isSubmitting
+            ? setupRequired ? "Creating..." : "Signing in..."
+            : setupRequired ? "Create account" : "Sign in"}
         </button>
       </form>
     </main>
@@ -2030,6 +2124,97 @@ function HistoryPage({
   );
 }
 
+function TeamPage({ createWorkspaceUser, session }) {
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState("member");
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  if (session.user?.role !== "admin") {
+    return (
+      <EmptyState
+        title="Admin access required"
+        text="Only workspace admins can create new accounts."
+      />
+    );
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setIsSubmitting(true);
+    setNotice("");
+    setError("");
+
+    try {
+      const user = await createWorkspaceUser({ email, name, password, role });
+      setNotice(`Created ${user.email}`);
+      setEmail("");
+      setName("");
+      setPassword("");
+      setRole("member");
+    } catch (nextError) {
+      setError(nextError.message || "User creation failed");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="page-stack">
+      <section className="dashboard-hero">
+        <div>
+          <p className="eyebrow">Team</p>
+          <h2>{session.workspace?.name || "Workspace"} accounts</h2>
+          <div className="dashboard-meta">
+            <span>{session.user?.email}</span>
+            <span>{titleCase(session.user?.role || "admin")}</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="form-grid">
+        <Card title="Create User">
+          <form className="team-form" onSubmit={handleSubmit}>
+            <TextField label="Name" onChange={setName} value={name} />
+            <TextField label="Email" onChange={setEmail} type="email" value={email} />
+            <TextField
+              label="Temporary password"
+              onChange={setPassword}
+              type="password"
+              value={password}
+            />
+            <SelectField
+              label="Role"
+              onChange={setRole}
+              options={[
+                ["member", "Member"],
+                ["admin", "Admin"]
+              ]}
+              value={role}
+            />
+            {notice && <div className="team-notice">{notice}</div>}
+            {error && <div className="auth-error">{error}</div>}
+            <button className="primary-button" disabled={isSubmitting} type="submit">
+              {isSubmitting ? "Creating..." : "Create account"}
+            </button>
+          </form>
+        </Card>
+
+        <Card title="Access Model">
+          <p className="helper-text">
+            Accounts belong to this workspace. Members can work with saved runs and exports; admins can create users and view audit data.
+          </p>
+          <Fact label="Workspace" value={session.workspace?.name || "n/a"} />
+          <Fact label="Your role" value={titleCase(session.user?.role || "admin")} />
+        </Card>
+      </section>
+    </div>
+  );
+}
+
 function WorkflowList({ rows, setActivePage }) {
   return (
     <div className="workflow-list">
@@ -2421,11 +2606,15 @@ function NumberField({ error, field, integer = false, label, onChange, unit, val
   );
 }
 
-function TextField({ label, onChange, value }) {
+function TextField({ label, onChange, type = "text", value }) {
   return (
     <label className="text-field">
       <span>{label}</span>
-      <input onChange={(event) => onChange(event.target.value)} value={value ?? ""} />
+      <input
+        onChange={(event) => onChange(event.target.value)}
+        type={type}
+        value={value ?? ""}
+      />
     </label>
   );
 }

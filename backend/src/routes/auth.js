@@ -3,10 +3,14 @@ import {
   authenticateRequest,
   bearerToken,
   loginUser,
-  logoutUser
+  logoutUser,
+  setupFirstAdmin
 } from "../auth.js";
 import { sendApiError } from "../apiError.js";
-import { requireObjectBody } from "../validation.js";
+import {
+  requireObjectBody,
+  validateFirstAdminSetupPayload
+} from "../validation.js";
 
 const router = express.Router();
 
@@ -19,6 +23,15 @@ router.post("/login", async (req, res) => {
         password: body.password
       })
     );
+  } catch (error) {
+    sendApiError(res, error);
+  }
+});
+
+router.post("/setup", async (req, res) => {
+  try {
+    const payload = validateFirstAdminSetupPayload(req.body);
+    res.status(201).json(await setupFirstAdmin(payload));
   } catch (error) {
     sendApiError(res, error);
   }

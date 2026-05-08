@@ -62,6 +62,30 @@ export function validateCalculationPayload(body) {
 
 export function validateUserCreatePayload(body) {
   const payload = requireObjectBody(body);
+  return validateUserPayload(payload);
+}
+
+export function validateFirstAdminSetupPayload(body) {
+  const payload = validateUserPayload(requireObjectBody(body));
+  const workspaceName = String(body.workspaceName || "").trim();
+
+  if (!workspaceName) {
+    throw new ApiError(
+      400,
+      "VALIDATION_ERROR",
+      "Workspace name is required",
+      "workspaceName"
+    );
+  }
+
+  return {
+    ...payload,
+    role: "admin",
+    workspaceName
+  };
+}
+
+function validateUserPayload(payload) {
   const email = normalizeEmail(payload.email);
   const password = String(payload.password || "");
 
