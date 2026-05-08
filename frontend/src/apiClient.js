@@ -83,12 +83,11 @@ function readStoredToken() {
 
 function resolveConfiguredApi() {
   const envApi = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_URL || "";
-  const allowExternalApi = import.meta.env.VITE_ALLOW_EXTERNAL_API === "true";
   const sameOrigin =
     typeof window !== "undefined" ? window.location.origin : "http://localhost:10000";
 
   if (!import.meta.env.DEV) {
-    if (allowExternalApi && envApi && !isLocalApiUrl(envApi)) {
+    if (envApi && !isLocalApiUrl(envApi)) {
       return envApi;
     }
 

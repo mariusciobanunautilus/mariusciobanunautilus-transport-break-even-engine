@@ -141,7 +141,39 @@ When `DATABASE_URL` is not configured, the backend falls back to an in-memory st
 
 In production, `DATABASE_URL` is required. `CORS_ORIGIN` should be set to the frontend origin when the frontend is hosted separately; Render deployments also accept `RENDER_EXTERNAL_URL` as a restricted same-service origin fallback. The first workspace admin can be bootstrapped from `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `WORKSPACE_NAME`, or created from the setup form when the database has no users yet. If those admin variables are missing, the service still starts and `/api/health` reports `auth.bootstrapRequired: true`.
 
-For same-service Render deployments, the frontend calls `/api` on the current site. Production builds ignore `VITE_API_BASE` and `VITE_API_URL` unless `VITE_ALLOW_EXTERNAL_API=true` is set, which prevents stale localhost or old Render API URLs from breaking login.
+For same-service Render deployments, leave `VITE_API_BASE` empty and the frontend calls `/api` on the current site. For split Static Site plus Web Service deployments, set `VITE_API_BASE` to the Web Service URL. Production builds ignore localhost API URLs so an old local value cannot break login.
+
+## Render Deployment
+
+Current Render layout:
+
+- Static Site: `mariusciobanunautilus-transport-break-even-engine-1`
+- Static Site URL: `https://mariusciobanunautilus-transport-break-f3sc.onrender.com`
+- Web Service: `mariusciobanunautilus-transport-break-even-engine`
+- Web Service URL: `https://mariusciobanunautilus-transport-break.onrender.com`
+
+The browser should open the Static Site URL. The API must point to the Web Service URL.
+
+Static Site environment:
+
+- `VITE_API_BASE=https://mariusciobanunautilus-transport-break.onrender.com`
+
+Web Service environment:
+
+- `NODE_ENV=production`
+- `DATABASE_URL=<Render Postgres connection string>`
+- `CORS_ORIGIN=https://mariusciobanunautilus-transport-break-f3sc.onrender.com`
+- `WORKSPACE_NAME=Transport Workspace`
+- `ADMIN_EMAIL=<first admin email>`
+- `ADMIN_PASSWORD=<first admin password>`
+
+`HOST` is not required on Render. If it is present, it must be `0.0.0.0`.
+
+If `/api/health` returns `404` on the Static Site URL, that is expected unless the static site is proxying API routes. The important health check is:
+
+```text
+https://mariusciobanunautilus-transport-break.onrender.com/api/health
+```
 
 The current database layer uses `pg` and `backend/schema.sql`. Prisma/TypeScript migrations are still a future hardening step, but the current app no longer depends on memory storage when Postgres is configured.
 

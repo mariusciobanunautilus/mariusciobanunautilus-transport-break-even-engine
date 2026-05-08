@@ -10,6 +10,7 @@ import { corsOptions, serverHost, serverPort, validateRuntimeConfig } from "./co
 import authRouter from "./routes/auth.js";
 import calculationsRouter from "./routes/calculations.js";
 import usersRouter from "./routes/users.js";
+import { ensureDatabaseSchema } from "./schema.js";
 import { securityHeaders } from "./security.js";
 
 dotenv.config();
@@ -22,6 +23,7 @@ const port = serverPort();
 const host = serverHost();
 
 validateRuntimeConfig();
+await ensureDatabaseSchema();
 await bootstrapAuth();
 
 app.disable("x-powered-by");
