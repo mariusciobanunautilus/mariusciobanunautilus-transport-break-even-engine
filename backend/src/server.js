@@ -2,7 +2,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import { apiErrorHandler } from "./apiError.js";
-import { authenticateRequest, bootstrapAuth } from "./auth.js";
+import { authenticateRequest, bootstrapAuth, getAuthStatus } from "./auth.js";
 import { corsOptions, serverHost, serverPort, validateRuntimeConfig } from "./config.js";
 import authRouter from "./routes/auth.js";
 import calculationsRouter from "./routes/calculations.js";
@@ -38,12 +38,18 @@ app.use((error, req, res, next) => {
   next(error);
 });
 
-app.get("/api/health", (req, res) => {
-  res.json({
-    ok: true,
-    service: "transport-break-even-engine",
-    databaseConfigured: Boolean(process.env.DATABASE_URL)
-  });
+app.get("/api/health", async (req, res, next) => {
+  try {
+    const auth = await getAuthStatus();
+    res.json({
+      ok: true,
+      service: "transport-break-even-engine",
+      databaseConfigured: Boolean(process.env.DATABASE_URL),
+      auth
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.use("/api/auth", authRouter);

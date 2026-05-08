@@ -13,11 +13,26 @@ const memorySessions = new Map();
 
 export async function bootstrapAuth(env = process.env) {
   if (hasDatabaseUrl()) {
-    await bootstrapDatabaseAuth(env);
-    return;
+    return bootstrapDatabaseAuth(env);
   }
 
-  bootstrapMemoryAuth(env);
+  return bootstrapMemoryAuth(env);
+}
+
+export async function getAuthStatus() {
+  if (!hasDatabaseUrl()) {
+    return {
+      bootstrapRequired: memoryUsers.size === 0,
+      userCount: memoryUsers.size
+    };
+  }
+
+  const result = await query("SELECT COUNT(*)::INT AS count FROM users");
+  const userCount = Number(result.rows[0]?.count || 0);
+  return {
+    bootstrapRequired: userCount === 0,
+    userCount
+  };
 }
 
 export async function authenticateRequest(req, res, next) {
@@ -159,7 +174,9 @@ function bootstrapMemoryAuth(env) {
   const workspace = ensureMemoryWorkspace(workspaceName);
   const email = normalizeEmail(env.ADMIN_EMAIL || env.DEV_AUTH_EMAIL || "admin@example.com");
 
-  if ([...memoryUsers.values()].some((user) => user.email === email)) return;
+  if ([...memoryUsers.values()].some((user) => user.email === email)) {
+    return { adminCreated: false, bootstrapRequired: false };
+  }
 
   createMemoryUser({
     email,
@@ -168,6 +185,7 @@ function bootstrapMemoryAuth(env) {
     role: "admin",
     workspaceId: workspace.id
   });
+  return { adminCreated: true, bootstrapRequired: false };
 }
 
 async function bootstrapDatabaseAuth(env) {
@@ -175,7 +193,7 @@ async function bootstrapDatabaseAuth(env) {
   const email = normalizeEmail(env.ADMIN_EMAIL || "");
   const password = String(env.ADMIN_PASSWORD || "");
 
-  await withTransaction(async (client) => {
+  return withTransaction(async (client) => {
     const workspaceResult = await client.query(
       `INSERT INTO workspaces (name)
        VALUES ($1)
@@ -186,16 +204,15 @@ async function bootstrapDatabaseAuth(env) {
     const workspace = workspaceResult.rows[0];
     const userCount = await client.query("SELECT COUNT(*)::INT AS count FROM users");
 
-    if (Number(userCount.rows[0].count) > 0) return;
+    if (Number(userCount.rows[0].count) > 0) {
+      return { adminCreated: false, bootstrapRequired: false };
+    }
 
     if (!email || !password) {
-      if (env.NODE_ENV === "production") {
-        throw new Error(
-          "ADMIN_EMAIL and ADMIN_PASSWORD are required to bootstrap the first production user."
-        );
-      }
-
-      return;
+      console.warn(
+        "[auth] No users exist yet. Set ADMIN_EMAIL and ADMIN_PASSWORD, then restart to bootstrap the first admin."
+      );
+      return { adminCreated: false, bootstrapRequired: true };
     }
 
     const insertedUser = await client.query(
@@ -211,6 +228,7 @@ async function bootstrapDatabaseAuth(env) {
        ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = 'admin'`,
       [workspace.id, insertedUser.rows[0].id]
     );
+    return { adminCreated: true, bootstrapRequired: false };
   });
 }
 
