@@ -2151,6 +2151,10 @@ function HistoryPage({
         </Card>
       )}
 
+      {history.length > 0 && (
+        <HistoryTrendPanel runs={history} selectedRuns={selectedRuns} />
+      )}
+
       <Card title="Saved Runs">
         {history.length === 0 ? (
           <p className="helper-text">
@@ -2199,6 +2203,197 @@ function HistoryPage({
         </Card>
       )}
     </div>
+  );
+}
+
+function HistoryTrendPanel({ runs, selectedRuns }) {
+  const orderedRuns = [...runs]
+    .filter((run) =>
+      Number.isFinite(Number(run.breakEvenPerLoadedKm)) &&
+      Number.isFinite(Number(run.customerRateExclVat)) &&
+      Number.isFinite(Number(run.profitAfterTax))
+    )
+    .sort((left, right) => dateNumber(left.createdAt) - dateNumber(right.createdAt));
+  const chartRuns = orderedRuns.slice(-12);
+
+  if (chartRuns.length === 0) return null;
+
+  const selectedIdSet = new Set(selectedRuns.map((run) => String(run.id)));
+  const focusedRun = newestRun(selectedRuns.length > 0 ? selectedRuns : chartRuns);
+  const firstRun = chartRuns[0];
+  const latestRun = chartRuns[chartRuns.length - 1];
+  const xStart = 62;
+  const xEnd = 790;
+  const rateTop = 24;
+  const rateBottom = 154;
+  const profitBase = 224;
+  const profitLimit = 52;
+  const rateValues = chartRuns.flatMap((run) => [
+    Number(run.breakEvenPerLoadedKm),
+    Number(run.customerRateExclVat)
+  ]);
+  const rateMin = Math.min(...rateValues);
+  const rateMax = Math.max(...rateValues);
+  const ratePadding = Math.max((rateMax - rateMin) * 0.12, 0.01);
+  const rateDomain = {
+    min: rateMin - ratePadding,
+    max: rateMax + ratePadding
+  };
+  const maxAbsProfit = Math.max(
+    ...chartRuns.map((run) => Math.abs(Number(run.profitAfterTax))),
+    1
+  );
+  const breakEvenPoints = chartRuns.map((run, index) => chartPoint({
+    chartRuns,
+    index,
+    value: Number(run.breakEvenPerLoadedKm),
+    xEnd,
+    xStart,
+    yBottom: rateBottom,
+    yDomain: rateDomain,
+    yTop: rateTop
+  }));
+  const customerRatePoints = chartRuns.map((run, index) => chartPoint({
+    chartRuns,
+    index,
+    value: Number(run.customerRateExclVat),
+    xEnd,
+    xStart,
+    yBottom: rateBottom,
+    yDomain: rateDomain,
+    yTop: rateTop
+  }));
+  const latestRateDelta =
+    Number(latestRun.breakEvenPerLoadedKm) - Number(firstRun.breakEvenPerLoadedKm);
+  const latestProfitDelta =
+    Number(latestRun.profitAfterTax) - Number(firstRun.profitAfterTax);
+  const flowScale = Math.max(
+    Number(focusedRun?.totalAnnualCost) || 0,
+    Math.abs(Number(focusedRun?.profitAfterTax) || 0),
+    1
+  );
+  const rateScale = Math.max(
+    Number(focusedRun?.breakEvenPerLoadedKm) || 0,
+    Number(focusedRun?.customerRateExclVat) || 0,
+    1
+  );
+  const flowItems = [
+    {
+      label: "Annual cost",
+      value: money(focusedRun?.totalAnnualCost),
+      width: clampPercent(safeRatio(Number(focusedRun?.totalAnnualCost), flowScale) * 100)
+    },
+    {
+      label: "Break-even",
+      value: `${money(focusedRun?.breakEvenPerLoadedKm)} / km`,
+      width: clampPercent(safeRatio(Number(focusedRun?.breakEvenPerLoadedKm), rateScale) * 100)
+    },
+    {
+      label: "Customer rate",
+      value: `${money(focusedRun?.customerRateExclVat)} / km`,
+      width: clampPercent(safeRatio(Number(focusedRun?.customerRateExclVat), rateScale) * 100)
+    },
+    {
+      label: "Profit",
+      value: money(focusedRun?.profitAfterTax),
+      width: clampPercent(
+        safeRatio(Math.abs(Number(focusedRun?.profitAfterTax)), flowScale) * 100
+      )
+    }
+  ];
+
+  return (
+    <section className="history-visual-panel" aria-label="Saved run trends and flow">
+      <div className="history-visual-header">
+        <div>
+          <p className="eyebrow">Trend & flow</p>
+          <h2>Saved run movement</h2>
+        </div>
+        <div className="history-visual-stats">
+          <span>
+            Break-even
+            <strong>{signedMoney(latestRateDelta, 4)} / km</strong>
+          </span>
+          <span>
+            Profit
+            <strong>{signedMoney(latestProfitDelta)}</strong>
+          </span>
+        </div>
+      </div>
+
+      <div className="history-chart-layout">
+        <div className="history-trend-chart">
+          <svg
+            aria-label="Break-even, customer rate and profit trend across saved runs"
+            role="img"
+            viewBox="0 0 840 274"
+          >
+            <line className="chart-grid-line" x1="62" x2="790" y1="24" y2="24" />
+            <line className="chart-grid-line" x1="62" x2="790" y1="89" y2="89" />
+            <line className="chart-grid-line" x1="62" x2="790" y1="154" y2="154" />
+            <line className="chart-axis-line" x1="62" x2="790" y1="224" y2="224" />
+            <text className="chart-axis-label" x="18" y="28">{money(rateDomain.max, 2)}</text>
+            <text className="chart-axis-label" x="18" y="158">{money(rateDomain.min, 2)}</text>
+            <text className="chart-axis-label" x="18" y="228">Profit</text>
+            {chartRuns.map((run, index) => {
+              const x = chartX(index, chartRuns.length, xStart, xEnd);
+              const profit = Number(run.profitAfterTax);
+              const barHeight = safeRatio(Math.abs(profit), maxAbsProfit) * profitLimit;
+              const y = profit >= 0 ? profitBase - barHeight : profitBase;
+              const highlighted = selectedIdSet.has(String(run.id));
+
+              return (
+                <g className={highlighted ? "is-highlighted" : ""} key={run.id}>
+                  <rect
+                    className="profit-bar"
+                    height={Math.max(barHeight, 2)}
+                    rx="3"
+                    width="18"
+                    x={x - 9}
+                    y={y}
+                  />
+                  {highlighted && (
+                    <line className="selected-run-marker" x1={x} x2={x} y1="18" y2="242" />
+                  )}
+                  <text className="chart-run-label" textAnchor="middle" x={x} y="264">
+                    {shortDateTime(run.createdAt)}
+                  </text>
+                </g>
+              );
+            })}
+            <path className="break-even-line" d={linePath(breakEvenPoints)} />
+            <path className="customer-rate-line" d={linePath(customerRatePoints)} />
+            {breakEvenPoints.map((point) => (
+              <circle className="break-even-point" cx={point.x} cy={point.y} key={`be-${point.id}`} r="4.5" />
+            ))}
+            {customerRatePoints.map((point) => (
+              <circle className="customer-rate-point" cx={point.x} cy={point.y} key={`rate-${point.id}`} r="4.5" />
+            ))}
+          </svg>
+          <div className="chart-legend" aria-hidden="true">
+            <span><i className="legend-break-even" />Break-even</span>
+            <span><i className="legend-rate" />Customer rate</span>
+            <span><i className="legend-profit" />Profit</span>
+          </div>
+        </div>
+
+        <div className="history-flow-panel">
+          <div>
+            <span>{focusedRun?.runName || "Latest run"}</span>
+            <strong>{dateTime(focusedRun?.createdAt)}</strong>
+          </div>
+          <div className="history-flow-chain">
+            {flowItems.map((item) => (
+              <div className="history-flow-step" key={item.label}>
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+                <i style={{ width: `${item.width}%` }} />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -3346,12 +3541,63 @@ function clampPercent(value) {
   return Math.max(0, Math.min(100, Number(value)));
 }
 
+function chartX(index, count, xStart, xEnd) {
+  if (count <= 1) return (xStart + xEnd) / 2;
+  return xStart + (index / (count - 1)) * (xEnd - xStart);
+}
+
+function chartPoint({
+  chartRuns,
+  index,
+  value,
+  xEnd,
+  xStart,
+  yBottom,
+  yDomain,
+  yTop
+}) {
+  const ratio = safeRatio(value - yDomain.min, yDomain.max - yDomain.min);
+  return {
+    id: chartRuns[index].id,
+    x: chartX(index, chartRuns.length, xStart, xEnd),
+    y: yBottom - clampPercent(ratio * 100) / 100 * (yBottom - yTop)
+  };
+}
+
+function linePath(points) {
+  return points
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+    .join(" ");
+}
+
 function dateTime(value) {
   if (!value) return "n/a";
   return new Date(value).toLocaleString(activeFormatContext.locale, {
     dateStyle: "medium",
     timeStyle: "short"
   });
+}
+
+function shortDateTime(value) {
+  if (!value) return "n/a";
+  return new Date(value).toLocaleString(activeFormatContext.locale, {
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "short"
+  });
+}
+
+function dateNumber(value) {
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function newestRun(runs = []) {
+  const sortedRuns = [...runs].sort(
+    (left, right) => dateNumber(left.createdAt) - dateNumber(right.createdAt)
+  );
+  return sortedRuns[sortedRuns.length - 1];
 }
 
 function setActiveFormatContext(country) {

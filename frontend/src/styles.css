@@ -1905,6 +1905,240 @@ th {
   accent-color: var(--accent);
 }
 
+.history-visual-panel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 16px;
+}
+
+.history-visual-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.history-visual-header h2 {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 1.05rem;
+  line-height: 1.25;
+}
+
+.history-visual-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: min(100%, 360px);
+}
+
+.history-visual-stats span {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-muted);
+  padding: 9px 11px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 780;
+}
+
+.history-visual-stats strong {
+  color: var(--text);
+  font-size: 0.92rem;
+}
+
+.history-chart-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(260px, 0.8fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.history-trend-chart,
+.history-flow-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-muted);
+}
+
+.history-trend-chart {
+  overflow-x: auto;
+  padding: 10px 10px 8px;
+}
+
+.history-trend-chart svg {
+  display: block;
+  width: 100%;
+  min-width: 680px;
+  min-height: 220px;
+}
+
+.chart-grid-line {
+  stroke: #e4e9ec;
+  stroke-width: 1;
+}
+
+.chart-axis-line {
+  stroke: #cfd7dd;
+  stroke-width: 1.5;
+}
+
+.chart-axis-label,
+.chart-run-label {
+  fill: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.break-even-line,
+.customer-rate-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3.5;
+}
+
+.break-even-line {
+  stroke: var(--accent);
+}
+
+.customer-rate-line {
+  stroke: #2d6fb3;
+}
+
+.break-even-point {
+  fill: var(--accent);
+  stroke: #ffffff;
+  stroke-width: 2;
+}
+
+.customer-rate-point {
+  fill: #2d6fb3;
+  stroke: #ffffff;
+  stroke-width: 2;
+}
+
+.profit-bar {
+  fill: #d1972b;
+  opacity: 0.62;
+}
+
+.selected-run-marker {
+  stroke: var(--line-strong);
+  stroke-dasharray: 4 5;
+  stroke-width: 1.5;
+}
+
+.is-highlighted .profit-bar {
+  opacity: 1;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 0 6px 4px;
+}
+
+.chart-legend span {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 790;
+}
+
+.chart-legend i {
+  width: 22px;
+  height: 4px;
+  border-radius: 999px;
+}
+
+.legend-break-even {
+  background: var(--accent);
+}
+
+.legend-rate {
+  background: #2d6fb3;
+}
+
+.legend-profit {
+  background: #d1972b;
+}
+
+.history-flow-panel {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  padding: 14px;
+}
+
+.history-flow-panel > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.history-flow-panel > div:first-child span {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-weight: 850;
+}
+
+.history-flow-panel > div:first-child strong {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.history-flow-chain {
+  display: grid;
+  gap: 10px;
+}
+
+.history-flow-step {
+  position: relative;
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.history-flow-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  right: calc(50% - 1px);
+  bottom: -11px;
+  width: 2px;
+  height: 10px;
+  background: var(--line-strong);
+}
+
+.history-flow-step span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 820;
+}
+
+.history-flow-step strong {
+  color: var(--text);
+  font-size: 0.96rem;
+}
+
+.history-flow-step i {
+  display: block;
+  height: 7px;
+  min-width: 4px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), #2d6fb3);
+}
+
 .comparison-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2135,6 +2369,8 @@ th {
   .hover-sensitivity-summary,
   .dashboard-visual-grid,
   .dashboard-layout,
+  .history-visual-header,
+  .history-chart-layout,
   .two-column,
   .form-grid,
   .group-toolbar,
@@ -2225,6 +2461,15 @@ th {
 
   .history-row {
     grid-template-columns: 1fr;
+  }
+
+  .history-visual-stats {
+    grid-template-columns: 1fr;
+    min-width: 0;
+  }
+
+  .history-trend-chart svg {
+    min-width: 620px;
   }
 
   .history-metrics {
