@@ -94,6 +94,13 @@ const periodCostFields = [
   ["otherCost", "Other"]
 ];
 
+const periodAssumptionFields = [
+  "totalKm",
+  "loadedKm",
+  ...periodCostFields.map(([field]) => field),
+  "revenueExclVat"
+];
+
 const localeByCountryCode = {
   AT: "de-AT",
   BG: "bg-BG",
@@ -792,6 +799,38 @@ export default function App() {
     setStatus("Unsaved period changes");
   }
 
+  function copyPreviousPeriodAssumptions(index) {
+    if (index <= 0) return;
+    setPeriods((current) =>
+      current.map((period, periodIndex) =>
+        periodIndex === index
+          ? copyPeriodAssumptions(current[index - 1], period)
+          : period
+      )
+    );
+    setStatus("Copied previous period assumptions");
+  }
+
+  function applyPeriodAssumptionsForward(index) {
+    setPeriods((current) =>
+      current.map((period, periodIndex) =>
+        periodIndex > index
+          ? copyPeriodAssumptions(current[index], period)
+          : period
+      )
+    );
+    setStatus("Applied period assumptions forward");
+  }
+
+  function applyFirstPeriodAssumptionsToAll() {
+    setPeriods((current) =>
+      current.map((period, periodIndex) =>
+        periodIndex > 0 ? copyPeriodAssumptions(current[0], period) : period
+      )
+    );
+    setStatus("Applied first period assumptions to all periods");
+  }
+
   function removePeriod(index) {
     setPeriods((current) => current.filter((_, periodIndex) => periodIndex !== index));
     setStatus("Period removed");
@@ -944,6 +983,9 @@ export default function App() {
         {activePage === "time" && (
           <TimeModelPage
             addPeriod={addPeriod}
+            applyFirstPeriodAssumptionsToAll={applyFirstPeriodAssumptionsToAll}
+            applyPeriodAssumptionsForward={applyPeriodAssumptionsForward}
+            copyPreviousPeriodAssumptions={copyPreviousPeriodAssumptions}
             generateMonthlyPlan={generateMonthlyPlan}
             periods={periods}
             removePeriod={removePeriod}
@@ -1675,6 +1717,9 @@ function ModeStatusPanel({
 
 function TimeModelPage({
   addPeriod,
+  applyFirstPeriodAssumptionsToAll,
+  applyPeriodAssumptionsForward,
+  copyPreviousPeriodAssumptions,
   generateMonthlyPlan,
   periods,
   removePeriod,
@@ -1685,6 +1730,7 @@ function TimeModelPage({
 }) {
   const warnings = result?.warnings || [];
   const aggregation = result?.periodAggregation;
+  const periodOutputs = aggregation?.periodBreakdown || [];
 
   return (
     <div className="page-stack">
@@ -1710,7 +1756,7 @@ function TimeModelPage({
       </section>
 
       <section className="form-grid">
-        <Card title="Calculation Mode">
+        <Card title="Input Setup">
           <SelectField
             label="Break-even mode"
             onChange={(value) => updateTimeModel("calculationMode", value)}
@@ -1741,7 +1787,7 @@ function TimeModelPage({
           />
         </Card>
 
-        <Card title="Weighted Result">
+        <Card title="Output Preview">
           <Fact label="Mode" value={result?.modeLabel || calculationModeLabels[timeModel.calculationMode]} />
           <Fact label="Weighted cost" value={money(result?.totalAnnualCost)} />
           <Fact label="Weighted loaded km" value={format(result?.loadedKmYear)} />
@@ -1758,7 +1804,29 @@ function TimeModelPage({
         </section>
       )}
 
-      <Card title="Period Data">
+      <section className="period-editor-panel">
+        <div className="period-editor-header">
+          <div>
+            <p className="eyebrow">Input Zone</p>
+            <h2>Period Assumptions</h2>
+          </div>
+          <div className="period-editor-actions">
+            <button
+              className="secondary-button"
+              disabled={periods.length < 2}
+              onClick={applyFirstPeriodAssumptionsToAll}
+              type="button"
+            >
+              Apply First To All
+            </button>
+            <button className="secondary-button" onClick={addPeriod} type="button">
+              Add Period
+            </button>
+            <button className="primary-button" onClick={generateMonthlyPlan} type="button">
+              Generate Monthly Plan
+            </button>
+          </div>
+        </div>
         {periods.length === 0 ? (
           <div className="empty-periods">
             <p>
@@ -1770,89 +1838,27 @@ function TimeModelPage({
             </button>
           </div>
         ) : (
-          <div className="period-table">
-            <div className="period-table-head">
-              <span>Period</span>
-              <span>Status</span>
-              <span>Total km</span>
-              <span>Loaded km</span>
-              <span>Cost buckets</span>
-              <span>Revenue</span>
-              <span />
-            </div>
+          <div className="period-card-list">
             {periods.map((period, index) => (
-              <article className="period-row" key={period.id || index}>
-                <div className="period-dates">
-                  <DateField
-                    label="Start"
-                    onChange={(value) => updatePeriod(index, "periodStart", value)}
-                    value={period.periodStart}
-                  />
-                  <DateField
-                    label="End"
-                    onChange={(value) => updatePeriod(index, "periodEnd", value)}
-                    value={period.periodEnd}
-                  />
-                </div>
-                <SelectField
-                  label="Status"
-                  onChange={(value) => updatePeriod(index, "dataStatus", value)}
-                  options={["planned", "actual", "forecast"].map((status) => [
-                    status,
-                    titleCase(status)
-                  ])}
-                  value={period.dataStatus}
-                />
-                <NumberField
-                  field="totalKm"
-                  label="Total km"
-                  onChange={(field, value) => updatePeriod(index, field, value)}
-                  unit="km"
-                  value={period.totalKm}
-                />
-                <NumberField
-                  field="loadedKm"
-                  label="Loaded km"
-                  onChange={(field, value) => updatePeriod(index, field, value)}
-                  unit="km"
-                  value={period.loadedKm}
-                />
-                <div className="period-cost-grid">
-                  {periodCostFields.map(([field, label]) => (
-                    <NumberField
-                      field={field}
-                      key={field}
-                      label={label}
-                      onChange={(fieldName, value) =>
-                        updatePeriod(index, fieldName, value)
-                      }
-                      unit={currencyCode()}
-                      value={period[field]}
-                    />
-                  ))}
-                </div>
-                <NumberField
-                  field="revenueExclVat"
-                  label="Revenue excl. VAT"
-                  onChange={(field, value) => updatePeriod(index, field, value)}
-                  unit={currencyCode()}
-                  value={period.revenueExclVat}
-                />
-                <button
-                  className="danger-link"
-                  onClick={() => removePeriod(index)}
-                  type="button"
-                >
-                  Remove
-                </button>
-              </article>
+              <PeriodEditorCard
+                canApplyForward={index < periods.length - 1}
+                canCopyPrevious={index > 0}
+                index={index}
+                key={period.id || index}
+                onApplyForward={() => applyPeriodAssumptionsForward(index)}
+                onCopyPrevious={() => copyPreviousPeriodAssumptions(index)}
+                onRemove={() => removePeriod(index)}
+                output={periodOutputs[index]}
+                period={period}
+                updatePeriod={updatePeriod}
+              />
             ))}
           </div>
         )}
-      </Card>
+      </section>
 
       {aggregation?.periodBreakdown?.length > 0 && (
-        <Card title="Selected Periods Used In Result">
+        <Card title="Output: Selected Periods Used In Result">
           <DataTable
             columns={["Period", "Status", "Loaded km", "Cost", "Break-even"]}
             rows={aggregation.periodBreakdown.map((period) => [
@@ -1866,6 +1872,141 @@ function TimeModelPage({
         </Card>
       )}
     </div>
+  );
+}
+
+function PeriodEditorCard({
+  canApplyForward,
+  canCopyPrevious,
+  index,
+  onApplyForward,
+  onCopyPrevious,
+  onRemove,
+  output,
+  period,
+  updatePeriod
+}) {
+  const periodLabel = `Period ${index + 1}`;
+  const status = period.dataStatus || "planned";
+
+  return (
+    <article className="period-editor-card">
+      <header className="period-card-header">
+        <div>
+          <span className={`period-status-chip ${status}`}>{titleCase(status)}</span>
+          <h3>{periodLabel}</h3>
+        </div>
+        <div className="period-card-actions">
+          <button disabled={!canCopyPrevious} onClick={onCopyPrevious} type="button">
+            Copy Previous
+          </button>
+          <button disabled={!canApplyForward} onClick={onApplyForward} type="button">
+            Apply Forward
+          </button>
+          <button className="danger-link" onClick={onRemove} type="button">
+            Remove
+          </button>
+        </div>
+      </header>
+
+      <div className="period-zone-grid">
+        <section className="period-input-zone">
+          <div className="zone-heading">
+            <span>Inputs</span>
+            <strong>Editable assumptions</strong>
+          </div>
+
+          <div className="period-input-section period-schedule-section">
+            <h4>Period</h4>
+            <div className="period-date-grid">
+              <DateField
+                label="Start"
+                onChange={(value) => updatePeriod(index, "periodStart", value)}
+                value={period.periodStart}
+              />
+              <DateField
+                label="End"
+                onChange={(value) => updatePeriod(index, "periodEnd", value)}
+                value={period.periodEnd}
+              />
+              <SelectField
+                label="Status"
+                onChange={(value) => updatePeriod(index, "dataStatus", value)}
+                options={["planned", "actual", "forecast"].map((item) => [
+                  item,
+                  titleCase(item)
+                ])}
+                value={period.dataStatus}
+              />
+            </div>
+          </div>
+
+          <div className="period-input-section">
+            <h4>Activity</h4>
+            <div className="period-activity-grid">
+              <NumberField
+                field="totalKm"
+                label="Total km"
+                onChange={(field, value) => updatePeriod(index, field, value)}
+                unit="km"
+                value={period.totalKm}
+              />
+              <NumberField
+                field="loadedKm"
+                label="Loaded km"
+                onChange={(field, value) => updatePeriod(index, field, value)}
+                unit="km"
+                value={period.loadedKm}
+              />
+            </div>
+          </div>
+
+          <div className="period-input-section">
+            <h4>Costs</h4>
+            <div className="period-cost-grid">
+              {periodCostFields.map(([field, label]) => (
+                <NumberField
+                  field={field}
+                  key={field}
+                  label={label}
+                  onChange={(fieldName, value) =>
+                    updatePeriod(index, fieldName, value)
+                  }
+                  unit={currencyCode()}
+                  value={period[field]}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="period-input-section">
+            <h4>Revenue</h4>
+            <div className="period-revenue-grid">
+              <NumberField
+                field="revenueExclVat"
+                label="Revenue excl. VAT"
+                onChange={(field, value) => updatePeriod(index, field, value)}
+                unit={currencyCode()}
+                value={period.revenueExclVat}
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className="period-output-zone">
+          <div className="zone-heading output">
+            <span>Output</span>
+            <strong>Calculated preview</strong>
+          </div>
+          <div className="period-output-metrics">
+            <Fact label="Loaded km" value={format(output?.loadedKm)} />
+            <Fact label="Cost used" value={money(output?.periodTotalCost)} />
+            <Fact label="Break-even" value={`${money(output?.breakEvenPerLoadedKm)} / km`} />
+            <Fact label="Status" value={titleCase(output?.dataStatus || period.dataStatus || "planned")} />
+          </div>
+        </section>
+      </div>
+    </article>
   );
 }
 
@@ -3480,6 +3621,16 @@ function createBlankPeriod(year, index) {
     otherCost: "",
     revenueExclVat: ""
   };
+}
+
+function copyPeriodAssumptions(source = {}, target = {}) {
+  return periodAssumptionFields.reduce(
+    (nextPeriod, field) => ({
+      ...nextPeriod,
+      [field]: source[field]
+    }),
+    target
+  );
 }
 
 function buildMonthlyPlanFromResult(result, year) {
