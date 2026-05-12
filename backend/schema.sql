@@ -248,11 +248,36 @@ WHERE workspace_id IS NULL;
 ALTER TABLE audit_log
   ALTER COLUMN workspace_id SET NOT NULL;
 
+CREATE TABLE IF NOT EXISTS agent_runs (
+  id BIGSERIAL PRIMARY KEY,
+  workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  actor_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  agent_name TEXT NOT NULL,
+  vehicle_code TEXT,
+  calculation_run_id BIGINT REFERENCES calculation_runs(id) ON DELETE SET NULL,
+  user_question TEXT,
+  input_payload JSONB NOT NULL,
+  output_payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS agent_feedback (
+  id BIGSERIAL PRIMARY KEY,
+  agent_run_id BIGINT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+  rating INTEGER,
+  comment TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (rating IS NULL OR rating BETWEEN 1 AND 5)
+);
+
 CREATE INDEX IF NOT EXISTS calculation_runs_workspace_created_at_idx
   ON calculation_runs (workspace_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS audit_log_workspace_created_at_idx
   ON audit_log (workspace_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS agent_runs_workspace_created_at_idx
+  ON agent_runs (workspace_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS auth_sessions_expires_at_idx
   ON auth_sessions (expires_at);

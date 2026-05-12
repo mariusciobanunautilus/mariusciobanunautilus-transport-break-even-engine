@@ -684,6 +684,130 @@ p {
   padding: 16px;
 }
 
+.ai-insights-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--accent);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 16px;
+}
+
+.ai-insights-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+}
+
+.ai-insights-header h2 {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 1.05rem;
+  line-height: 1.25;
+}
+
+.ai-insights-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.confidence-pill {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-muted);
+  color: var(--muted);
+  padding: 7px 10px;
+  font-size: 0.78rem;
+  font-weight: 820;
+}
+
+.confidence-pill.high {
+  border-color: #b9ded3;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.confidence-pill.low {
+  border-color: #efd7a9;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.ai-insight-body {
+  display: grid;
+  gap: 12px;
+}
+
+.ai-summary-panel,
+.ai-empty-state,
+.insight-list {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-muted);
+}
+
+.ai-summary-panel {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+}
+
+.ai-summary-panel span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 830;
+  text-transform: uppercase;
+}
+
+.ai-summary-panel strong {
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.ai-summary-panel p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.ai-empty-state {
+  padding: 14px;
+  color: var(--muted);
+}
+
+.ai-insight-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.insight-list {
+  padding: 12px;
+}
+
+.insight-list h3 {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.insight-list ul {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
 .dashboard-visual-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2369,6 +2493,8 @@ th {
   .hover-sensitivity-summary,
   .dashboard-visual-grid,
   .dashboard-layout,
+  .ai-insights-header,
+  .ai-insight-grid,
   .history-visual-header,
   .history-chart-layout,
   .two-column,

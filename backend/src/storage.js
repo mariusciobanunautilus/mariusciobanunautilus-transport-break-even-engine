@@ -1,8 +1,10 @@
 import { hasDatabaseUrl, query, withTransaction } from "./db.js";
 
 let nextMemoryId = 1;
+let nextMemoryAgentRunId = 1;
 const memoryRuns = new Map();
 const memoryAuditEvents = [];
+const memoryAgentRuns = [];
 
 export async function saveCalculationRun(record, context = {}) {
   const storageContext = normalizeStorageContext(context, record);
@@ -151,6 +153,62 @@ export async function listAuditEvents(context = {}) {
     afterSnapshot: row.after_snapshot,
     createdAt: toIso(row.created_at)
   }));
+}
+
+export async function saveAgentRun(record, context = {}) {
+  const storageContext = normalizeStorageContext(context, record);
+  const agentRun = {
+    agentName: String(record.agentName || "cost-intelligence"),
+    vehicleCode: record.vehicleCode || null,
+    calculationRunId: record.calculationRunId ? String(record.calculationRunId) : null,
+    userQuestion: String(record.userQuestion || ""),
+    inputPayload: record.inputPayload || {},
+    outputPayload: record.outputPayload || {},
+    workspaceId: String(record.workspaceId ?? storageContext.workspaceId),
+    actorUserId: record.actorUserId ?? storageContext.actorUserId ?? null
+  };
+
+  if (!hasDatabaseUrl()) {
+    const saved = {
+      ...agentRun,
+      id: String(nextMemoryAgentRunId++),
+      createdAt: new Date().toISOString()
+    };
+    memoryAgentRuns.push(saved);
+    return saved;
+  }
+
+  assertWorkspaceContext(storageContext);
+  const result = await query(
+    `INSERT INTO agent_runs (
+       workspace_id,
+       actor_user_id,
+       agent_name,
+       vehicle_code,
+       calculation_run_id,
+       user_question,
+       input_payload,
+       output_payload
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id, created_at`,
+    [
+      storageContext.workspaceId,
+      storageContext.actorUserId,
+      agentRun.agentName,
+      agentRun.vehicleCode,
+      agentRun.calculationRunId,
+      agentRun.userQuestion,
+      agentRun.inputPayload,
+      agentRun.outputPayload
+    ]
+  );
+
+  return {
+    ...agentRun,
+    id: String(result.rows[0].id),
+    createdAt: toIso(result.rows[0].created_at)
+  };
 }
 
 function saveMemoryRun(run) {

@@ -66,7 +66,13 @@ Mixed fleets are calculated group by group first, then aggregated into fleet-lev
    - Restricted CORS via `CORS_ORIGIN`
    - Tax/reference governance metadata for source, confidence and review status
 
-8. Verification
+8. AI agent foundation
+   - Protected `POST /api/agent/analyse`
+   - Cost Intelligence agent for result explanation, drivers, risks and actions
+   - Agent run logging in memory or Postgres
+   - Optional OpenAI Responses API enhancement when `OPENAI_API_KEY` is configured
+
+9. Verification
    - Shared formula tests
    - Backend storage tests
    - Frontend production build
@@ -128,6 +134,25 @@ New passwords must be at least 12 characters and include lowercase, uppercase, n
 
 The frontend now requires a backend session. Calculation previews still use the shared engine as a local fallback after sign-in if a preview endpoint is temporarily unavailable, but login, saving, history and export require the backend process.
 
+## AI Agent Layer
+
+The first agent sprint implements the Cost Intelligence agent. It explains the current break-even result, identifies cost drivers, flags risks, and recommends management actions. The cost engine remains the source of truth; the agent does not change formulas or overwrite saved data.
+
+Endpoint:
+
+```text
+POST /api/agent/analyse
+```
+
+The endpoint is protected by the same bearer-session auth as the rest of the workspace API. It logs each request and response to `agent_runs` when Postgres is configured, or to memory during local development.
+
+Optional AI configuration:
+
+- `OPENAI_API_KEY`
+- `OPENAI_AGENT_MODEL`, defaults to `gpt-4o-mini`
+
+If no OpenAI key is present, the endpoint returns a deterministic rule-based Cost Intelligence response so the dashboard remains usable in local development and production setup tests.
+
 ## Database Behaviour
 
 When `DATABASE_URL` is configured, the backend reads reference data from Postgres and persists saved runs to:
@@ -136,6 +161,7 @@ When `DATABASE_URL` is configured, the backend reads reference data from Postgre
 - `calculation_results`
 - `pricing_scenarios`
 - `audit_log`
+- `agent_runs`
 
 When `DATABASE_URL` is not configured, the backend falls back to an in-memory store so local development still works. In-memory users, sessions and saved runs are lost when the backend restarts.
 

@@ -60,6 +60,50 @@ export function validateCalculationPayload(body) {
   return payload;
 }
 
+export function validateAgentAnalysisPayload(body) {
+  const payload = requireObjectBody(body);
+  const agent = String(payload.agent || "cost-intelligence").trim();
+
+  if (agent !== "cost-intelligence") {
+    throw new ApiError(
+      400,
+      "VALIDATION_ERROR",
+      "Only the cost-intelligence agent is available in this sprint",
+      "agent"
+    );
+  }
+
+  const question = String(
+    payload.question || "Explain this transport break-even result."
+  ).trim();
+
+  if (question.length > 2000) {
+    throw new ApiError(
+      400,
+      "VALIDATION_ERROR",
+      "question must be 2000 characters or fewer",
+      "question"
+    );
+  }
+
+  const calculationRunId =
+    payload.calculationRunId == null || payload.calculationRunId === ""
+      ? null
+      : requirePositiveId(payload.calculationRunId, "calculationRunId");
+
+  if (payload.inputs !== undefined) requireObjectBody(payload.inputs, "inputs");
+  if (payload.outputs !== undefined) requireObjectBody(payload.outputs, "outputs");
+
+  return {
+    agent,
+    question,
+    calculationRunId,
+    vehicleCode: String(payload.vehicleCode || "").trim() || null,
+    inputs: payload.inputs || {},
+    outputs: payload.outputs || {}
+  };
+}
+
 export function validateUserCreatePayload(body) {
   const payload = requireObjectBody(body);
   return validateUserPayload(payload);

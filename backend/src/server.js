@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { apiErrorHandler } from "./apiError.js";
 import { authenticateRequest, bootstrapAuth, getAuthStatus } from "./auth.js";
 import { corsOptions, serverHost, serverPort, validateRuntimeConfig } from "./config.js";
+import agentRouter from "./routes/agent.js";
 import authRouter from "./routes/auth.js";
 import calculationsRouter from "./routes/calculations.js";
 import usersRouter from "./routes/users.js";
@@ -63,6 +64,7 @@ app.get("/api/health", async (req, res, next) => {
 app.use("/api/auth", authRouter);
 app.use("/api/users", authenticateRequest, usersRouter);
 app.use("/api", authenticateRequest);
+app.use("/api/agent", agentRouter);
 app.use("/api", calculationsRouter);
 app.use("/api", (req, res) => {
   res.status(404).json({

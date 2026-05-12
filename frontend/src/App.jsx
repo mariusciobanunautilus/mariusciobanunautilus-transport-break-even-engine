@@ -148,6 +148,9 @@ export default function App() {
   const [status, setStatus] = useState("Ready");
   const [isCalculating, setIsCalculating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [agentInsight, setAgentInsight] = useState(null);
+  const [agentError, setAgentError] = useState("");
+  const [isAgentLoading, setIsAgentLoading] = useState(false);
   const [saveNotice, setSaveNotice] = useState("");
   const [undoStack, setUndoStack] = useState([]);
 
@@ -415,6 +418,8 @@ export default function App() {
   async function previewCalculation(options = {}) {
     const payload = buildPayload();
     setIsCalculating(true);
+    setAgentInsight(null);
+    setAgentError("");
     if (!options.silent) setStatus("Calculating");
 
     try {
@@ -471,6 +476,34 @@ export default function App() {
       setStatus(`Save needs backend: ${error.message}`);
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function explainCurrentResult() {
+    const currentCalculation = displayCalculation;
+    if (!currentCalculation?.result) return;
+
+    setIsAgentLoading(true);
+    setAgentError("");
+
+    try {
+      const response = await apiRequest("/api/agent/analyse", {
+        method: "POST",
+        body: {
+          agent: "cost-intelligence",
+          question: "Explain this result and identify the main cost-per-km risks.",
+          vehicleCode: primaryVehicleCode(input, reference.vehicleClasses),
+          inputs: currentCalculation.input || buildPayload().input,
+          outputs: currentCalculation.result
+        }
+      });
+      setAgentInsight(response);
+      setStatus("AI insight ready");
+    } catch (error) {
+      setAgentError(error.message || "AI insight failed");
+      setStatus(`AI insight failed: ${error.message}`);
+    } finally {
+      setIsAgentLoading(false);
     }
   }
 
@@ -922,7 +955,13 @@ export default function App() {
         )}
 
         {activePage === "results" && (
-          <BreakEvenResultsPage calculation={displayCalculation} />
+          <BreakEvenResultsPage
+            agentError={agentError}
+            agentInsight={agentInsight}
+            calculation={displayCalculation}
+            isAgentLoading={isAgentLoading}
+            onExplainResult={explainCurrentResult}
+          />
         )}
 
         {activePage === "pricing" && (
@@ -1830,7 +1869,13 @@ function TimeModelPage({
   );
 }
 
-function BreakEvenResultsPage({ calculation }) {
+function BreakEvenResultsPage({
+  agentError,
+  agentInsight,
+  calculation,
+  isAgentLoading,
+  onExplainResult
+}) {
   const result = calculation?.result;
 
   if (!result) return <EmptyState title="No result yet" text="Calculate a preview first." />;
@@ -1845,6 +1890,13 @@ function BreakEvenResultsPage({ calculation }) {
         <Kpi label="Break-even tonne-km" value={money(result.breakEvenPerTonneKm)} unit={`${currencyCode()}/t-km`} />
         <Kpi label="EBIT before tax" value={money(result.ebitBeforeTax)} unit={currencyUnit("year")} />
       </section>
+
+      <AIInsightsCard
+        error={agentError}
+        insight={agentInsight}
+        isLoading={isAgentLoading}
+        onExplainResult={onExplainResult}
+      />
 
       <section className="two-column">
         <Card title="Cost Breakdown">
@@ -1895,6 +1947,72 @@ function BreakEvenResultsPage({ calculation }) {
 
       <CalculationBreakdown calculation={calculation} result={result} />
     </div>
+  );
+}
+
+function AIInsightsCard({ error, insight, isLoading, onExplainResult }) {
+  return (
+    <section className="ai-insights-card">
+      <div className="ai-insights-header">
+        <div>
+          <p className="eyebrow">AI Insights</p>
+          <h2>Cost Intelligence</h2>
+        </div>
+        <div className="ai-insights-actions">
+          {insight?.confidence && (
+            <span className={`confidence-pill ${insight.confidence}`}>
+              {titleCase(insight.confidence)} confidence
+            </span>
+          )}
+          <button
+            className="primary-button"
+            disabled={isLoading}
+            onClick={onExplainResult}
+            type="button"
+          >
+            {isLoading ? "Analysing..." : "Explain this result"}
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="auth-error">{error}</div>}
+
+      {insight ? (
+        <div className="ai-insight-body">
+          <section className="ai-summary-panel">
+            <span>{insight.source === "openai" ? "AI response" : "Rule-based response"}</span>
+            <strong>{insight.summary}</strong>
+            <p>{insight.answer}</p>
+          </section>
+          <div className="ai-insight-grid">
+            <InsightList title="Calculated Result" items={insight.calculatedResult} />
+            <InsightList title="Interpretation" items={insight.interpretation} />
+            <InsightList title="Key Drivers" items={insight.mainDrivers} />
+            <InsightList title="Risks" items={insight.risks} emptyText="No major risk flagged." />
+            <InsightList title="Recommended Actions" items={insight.recommendedActions || insight.recommendations} />
+            <InsightList title="Assumptions" items={insight.assumptions} />
+          </div>
+        </div>
+      ) : (
+        <div className="ai-empty-state">
+          <strong>No insight generated yet.</strong>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function InsightList({ emptyText = "No items.", items = [], title }) {
+  const visibleItems = items.length > 0 ? items : [emptyText];
+  return (
+    <section className="insight-list">
+      <h3>{title}</h3>
+      <ul>
+        {visibleItems.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -3029,6 +3147,11 @@ function EmptyState({ text, title }) {
       <p>{text}</p>
     </section>
   );
+}
+
+function primaryVehicleCode(input, vehicles = []) {
+  const vehicle = vehicles.find((item) => item.id === Number(input.vehicleClassId));
+  return vehicle?.code || vehicle?.displayName || vehicle?.name || "BLUEPRINT_DEFAULT";
 }
 
 function getFleetGroups(input, vehicles = []) {
