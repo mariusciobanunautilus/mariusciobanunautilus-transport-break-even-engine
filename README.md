@@ -19,6 +19,10 @@ The blueprint engine now supports three fleet strategies:
 
 Mixed fleets are calculated group by group first, then aggregated into fleet-level cost, break-even, rate and profit outputs. The UI formats monetary, rate and measurement inputs/outputs to two decimals while the engine keeps full precision internally. Vehicle counts are whole units.
 
+## Project Artifacts
+
+- `Transport_Break_Even_Engine_Master_Blueprint_v004.docx` - master blueprint reference for the transport break-even engine.
+
 ## Current Implementation Sprints
 
 1. Backend calculation preview engine
