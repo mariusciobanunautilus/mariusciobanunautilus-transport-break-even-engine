@@ -2091,13 +2091,23 @@ function BreakEvenResultsPage({
   );
 }
 
-function AIInsightsCard({ error, insight, isLoading, onExplainResult }) {
+function AIInsightsCard({
+  buttonLabel = "Explain this result",
+  emptyText = "No insight generated yet.",
+  error,
+  eyebrow = "AI Insights",
+  insight,
+  isLoading,
+  loadingLabel = "Analysing...",
+  onExplainResult,
+  title = "Cost Intelligence"
+}) {
   return (
     <section className="ai-insights-card">
       <div className="ai-insights-header">
         <div>
-          <p className="eyebrow">AI Insights</p>
-          <h2>Cost Intelligence</h2>
+          <p className="eyebrow">{eyebrow}</p>
+          <h2>{title}</h2>
         </div>
         <div className="ai-insights-actions">
           {insight?.confidence && (
@@ -2111,7 +2121,7 @@ function AIInsightsCard({ error, insight, isLoading, onExplainResult }) {
             onClick={onExplainResult}
             type="button"
           >
-            {isLoading ? "Analysing..." : "Explain this result"}
+            {isLoading ? loadingLabel : buttonLabel}
           </button>
         </div>
       </div>
@@ -2136,7 +2146,7 @@ function AIInsightsCard({ error, insight, isLoading, onExplainResult }) {
         </div>
       ) : (
         <div className="ai-empty-state">
-          <strong>No insight generated yet.</strong>
+          <strong>{emptyText}</strong>
         </div>
       )}
     </section>
@@ -2392,14 +2402,40 @@ function HistoryPage({
   onOpen
 }) {
   const [selectedIds, setSelectedIds] = useState([]);
+  const [historyAgentInsight, setHistoryAgentInsight] = useState(null);
+  const [historyAgentError, setHistoryAgentError] = useState("");
+  const [isHistoryAgentLoading, setIsHistoryAgentLoading] = useState(false);
   const selectedRuns = history.filter((run) => selectedIds.includes(String(run.id)));
 
   function toggleRunSelection(id) {
     const runId = String(id);
+    setHistoryAgentInsight(null);
+    setHistoryAgentError("");
     setSelectedIds((current) => {
       if (current.includes(runId)) return current.filter((item) => item !== runId);
       return [...current, runId].slice(-3);
     });
+  }
+
+  async function explainHistoryGraphics() {
+    setIsHistoryAgentLoading(true);
+    setHistoryAgentError("");
+
+    try {
+      const response = await apiRequest("/api/agent/analyse", {
+        method: "POST",
+        body: {
+          agent: "history-visual",
+          question: "Interpret the saved-run trend and flow graphics.",
+          outputs: buildHistoryVisualPayload(history, selectedRuns)
+        }
+      });
+      setHistoryAgentInsight(response);
+    } catch (error) {
+      setHistoryAgentError(error.message || "Graphic interpretation failed");
+    } finally {
+      setIsHistoryAgentLoading(false);
+    }
   }
 
   return (
@@ -2411,7 +2447,14 @@ function HistoryPage({
       )}
 
       {history.length > 0 && (
-        <HistoryTrendPanel runs={history} selectedRuns={selectedRuns} />
+        <HistoryTrendPanel
+          agentError={historyAgentError}
+          agentInsight={historyAgentInsight}
+          isAgentLoading={isHistoryAgentLoading}
+          onExplainGraphics={explainHistoryGraphics}
+          runs={history}
+          selectedRuns={selectedRuns}
+        />
       )}
 
       <Card title="Saved Runs">
@@ -2465,7 +2508,14 @@ function HistoryPage({
   );
 }
 
-function HistoryTrendPanel({ runs, selectedRuns }) {
+function HistoryTrendPanel({
+  agentError,
+  agentInsight,
+  isAgentLoading,
+  onExplainGraphics,
+  runs,
+  selectedRuns
+}) {
   const orderedRuns = [...runs]
     .filter((run) =>
       Number.isFinite(Number(run.breakEvenPerLoadedKm)) &&
@@ -2652,6 +2702,17 @@ function HistoryTrendPanel({ runs, selectedRuns }) {
           </div>
         </div>
       </div>
+
+      <AIInsightsCard
+        buttonLabel="Interpret graphics"
+        emptyText="Ask the agent to read the trend lines, profit bars, and focused run flow."
+        error={agentError}
+        eyebrow="AI chart reading"
+        insight={agentInsight}
+        isLoading={isAgentLoading}
+        onExplainResult={onExplainGraphics}
+        title="Graphic Interpreter"
+      />
     </section>
   );
 }
@@ -3872,6 +3933,59 @@ function newestRun(runs = []) {
     (left, right) => dateNumber(left.createdAt) - dateNumber(right.createdAt)
   );
   return sortedRuns[sortedRuns.length - 1];
+}
+
+function buildHistoryVisualPayload(runs = [], selectedRuns = []) {
+  const chartRuns = [...runs]
+    .filter((run) =>
+      Number.isFinite(Number(run.breakEvenPerLoadedKm)) &&
+      Number.isFinite(Number(run.customerRateExclVat)) &&
+      Number.isFinite(Number(run.profitAfterTax))
+    )
+    .sort((left, right) => dateNumber(left.createdAt) - dateNumber(right.createdAt))
+    .slice(-12)
+    .map(historyRunForAgent);
+  const selectedIdSet = new Set(selectedRuns.map((run) => String(run.id)));
+  const visibleSelectedRuns = chartRuns.filter((run) => selectedIdSet.has(String(run.id)));
+  const focusedRun = newestRun(visibleSelectedRuns.length > 0 ? visibleSelectedRuns : chartRuns);
+  const firstRun = chartRuns[0];
+  const latestRun = chartRuns[chartRuns.length - 1];
+
+  return {
+    chartRuns,
+    selectedRuns: visibleSelectedRuns,
+    focusedRun,
+    deltas:
+      firstRun && latestRun
+        ? {
+            breakEvenPerLoadedKm:
+              Number(latestRun.breakEvenPerLoadedKm) -
+              Number(firstRun.breakEvenPerLoadedKm),
+            customerRateExclVat:
+              Number(latestRun.customerRateExclVat) -
+              Number(firstRun.customerRateExclVat),
+            profitAfterTax:
+              Number(latestRun.profitAfterTax) - Number(firstRun.profitAfterTax)
+          }
+        : {}
+  };
+}
+
+function historyRunForAgent(run) {
+  return {
+    id: String(run.id),
+    runName: run.runName,
+    createdAt: run.createdAt,
+    country: run.country,
+    companyType: run.companyType,
+    calculationMode: run.calculationMode,
+    planYear: run.planYear,
+    scenarioStatus: run.scenarioStatus,
+    totalAnnualCost: Number(run.totalAnnualCost),
+    breakEvenPerLoadedKm: Number(run.breakEvenPerLoadedKm),
+    customerRateExclVat: Number(run.customerRateExclVat),
+    profitAfterTax: Number(run.profitAfterTax)
+  };
 }
 
 function setActiveFormatContext(country) {

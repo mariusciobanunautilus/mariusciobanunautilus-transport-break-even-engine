@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildLocalCostInsight } from "./src/agents/costIntelligenceAgent.js";
+import {
+  buildLocalCostInsight,
+  buildLocalHistoryGraphicInsight
+} from "./src/agents/costIntelligenceAgent.js";
 import { saveAgentRun } from "./src/storage.js";
 import { validateAgentAnalysisPayload } from "./src/validation.js";
 
@@ -35,7 +38,40 @@ test("cost intelligence agent separates calculated result and recommendations", 
   assert.ok(insight.recommendedActions.length > 0);
 });
 
-test("agent analysis validation accepts only the first sprint agent", () => {
+test("history graphic agent interprets saved-run movement", () => {
+  const insight = buildLocalHistoryGraphicInsight({
+    outputs: {
+      chartRuns: [
+        {
+          id: "1",
+          runName: "Baseline",
+          createdAt: "2026-05-08T20:42:00.000Z",
+          totalAnnualCost: 1342980,
+          breakEvenPerLoadedKm: 1.46,
+          customerRateExclVat: 1.68,
+          profitAfterTax: 169215
+        },
+        {
+          id: "2",
+          runName: "Latest",
+          createdAt: "2026-05-13T00:25:00.000Z",
+          totalAnnualCost: 178756,
+          breakEvenPerLoadedKm: 1.95,
+          customerRateExclVat: 2.24,
+          profitAfterTax: 22523
+        }
+      ]
+    }
+  });
+
+  assert.equal(insight.requiresHumanReview, true);
+  assert.ok(insight.calculatedResult.some((item) => item.includes("Break-even")));
+  assert.ok(insight.mainDrivers.some((item) => item.includes("Customer rate")));
+  assert.ok(insight.risks.some((risk) => risk.includes("Break-even")));
+  assert.ok(insight.recommendedActions.length > 0);
+});
+
+test("agent analysis validation accepts supported agents", () => {
   assert.equal(
     validateAgentAnalysisPayload({
       question: "Explain",
@@ -44,9 +80,18 @@ test("agent analysis validation accepts only the first sprint agent", () => {
     }).agent,
     "cost-intelligence"
   );
+  assert.equal(
+    validateAgentAnalysisPayload({
+      agent: "history-visual",
+      outputs: {
+        chartRuns: []
+      }
+    }).agent,
+    "history-visual"
+  );
   assert.throws(
     () => validateAgentAnalysisPayload({ agent: "scenario", inputs: {}, outputs: {} }),
-    /cost-intelligence/
+    /cost-intelligence or history-visual/
   );
 });
 

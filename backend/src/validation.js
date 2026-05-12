@@ -63,12 +63,13 @@ export function validateCalculationPayload(body) {
 export function validateAgentAnalysisPayload(body) {
   const payload = requireObjectBody(body);
   const agent = String(payload.agent || "cost-intelligence").trim();
+  const allowedAgents = new Set(["cost-intelligence", "history-visual"]);
 
-  if (agent !== "cost-intelligence") {
+  if (!allowedAgents.has(agent)) {
     throw new ApiError(
       400,
       "VALIDATION_ERROR",
-      "Only the cost-intelligence agent is available in this sprint",
+      "agent must be cost-intelligence or history-visual",
       "agent"
     );
   }

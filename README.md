@@ -73,6 +73,7 @@ Mixed fleets are calculated group by group first, then aggregated into fleet-lev
 8. AI agent foundation
    - Protected `POST /api/agent/analyse`
    - Cost Intelligence agent for result explanation, drivers, risks and actions
+   - Graphic Interpreter agent for saved-run trend and flow interpretation
    - Agent run logging in memory or Postgres
    - Optional OpenAI Responses API enhancement when `OPENAI_API_KEY` is configured
 
@@ -140,7 +141,7 @@ The frontend now requires a backend session. Calculation previews still use the 
 
 ## AI Agent Layer
 
-The first agent sprint implements the Cost Intelligence agent. It explains the current break-even result, identifies cost drivers, flags risks, and recommends management actions. The cost engine remains the source of truth; the agent does not change formulas or overwrite saved data.
+The first agent sprint implements the Cost Intelligence agent and the History Graphic Interpreter. Cost Intelligence explains the current break-even result, identifies cost drivers, flags risks, and recommends management actions. The Graphic Interpreter reads the numeric data behind saved-run trend and flow charts, including break-even movement, customer-rate movement, profit bars and the focused run. The cost engine remains the source of truth; agents do not change formulas or overwrite saved data.
 
 Endpoint:
 
